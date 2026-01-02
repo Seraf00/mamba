@@ -228,7 +228,8 @@ class MultiscaleMambaBottleneck(nn.Module):
     Args:
         dim: Feature dimension
         depth: Number of Mamba blocks per branch
-        num_branches: Number of parallel branches
+        num_branches: Number of parallel branches (or use scales list)
+        scales: List of scale factors for each branch (alternative to num_branches)
         mamba_type: Type of Mamba block
     """
     
@@ -237,6 +238,7 @@ class MultiscaleMambaBottleneck(nn.Module):
         dim: int,
         depth: int = 2,
         num_branches: int = 3,
+        scales: list = None,
         mamba_type: str = 'vmamba',
         d_state: int = 16,
         expand: float = 2.0,
@@ -245,14 +247,22 @@ class MultiscaleMambaBottleneck(nn.Module):
         super().__init__()
         
         self.dim = dim
+        
+        # Use scales list if provided, otherwise use num_branches
+        if scales is not None:
+            num_branches = len(scales)
+            self.scales = scales
+        else:
+            self.scales = list(range(1, num_branches + 1))
+        
         self.num_branches = num_branches
         branch_dim = dim // num_branches
         
         # Parallel Mamba branches with different configurations
         self.branches = nn.ModuleList()
         for i in range(num_branches):
-            # Vary d_state for different receptive fields
-            branch_d_state = d_state * (i + 1)
+            # Vary d_state based on scale for different receptive fields
+            branch_d_state = d_state * self.scales[i]
             
             branch = nn.ModuleList()
             branch.append(nn.Conv2d(dim, branch_dim, 1))  # Input proj
@@ -262,8 +272,7 @@ class MultiscaleMambaBottleneck(nn.Module):
                     variant=mamba_type,
                     dim=branch_dim,
                     d_state=branch_d_state,
-                    expand=expand,
-                    **kwargs
+                    expand=expand
                 )
                 branch.append(block)
             

@@ -322,11 +322,14 @@ class MambaDeepLab(nn.Module):
     
     def _make_dilated(self, layer: nn.Module, dilation: int) -> nn.Module:
         """Convert layer to use dilated convolutions."""
-        for module in layer.modules():
+        for name, module in layer.named_modules():
             if isinstance(module, nn.Conv2d):
                 if module.kernel_size == (3, 3):
                     module.dilation = (dilation, dilation)
                     module.padding = (dilation, dilation)
+                    module.stride = (1, 1)
+                # Also fix stride in 1x1 convs for the first block (downsample)
+                elif module.stride == (2, 2):
                     module.stride = (1, 1)
         return layer
     

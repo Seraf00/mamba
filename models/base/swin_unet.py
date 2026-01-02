@@ -555,7 +555,9 @@ class SwinUNet(nn.Module):
         window_size: int = 7,
         mlp_ratio: float = 4.0,
         drop_rate: float = 0.0,
-        attn_drop_rate: float = 0.0
+        attn_drop_rate: float = 0.0,
+        pretrained: bool = False,  # Ignored, included for API compatibility
+        **kwargs  # Ignore other unknown arguments
     ):
         super().__init__()
         

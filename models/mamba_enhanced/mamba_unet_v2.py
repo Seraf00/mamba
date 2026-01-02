@@ -145,9 +145,12 @@ class MambaDecoderBlockV2(nn.Module):
         
         # Cross-Mamba fusion
         if self.mamba_skip is not None:
-            x, skip = self.mamba_skip(x, skip)
+            # CrossMambaFusion returns a single fused feature
+            fused = self.mamba_skip(x, skip)
+            x = torch.cat([fused, x], dim=1)
+        else:
+            x = torch.cat([skip, x], dim=1)
         
-        x = torch.cat([skip, x], dim=1)
         return self.conv(x)
 
 

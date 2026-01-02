@@ -349,7 +349,7 @@ class MambaFPN(nn.Module):
         self.bottleneck = MambaBottleneck(
             dim=self.backbone_channels[-1],
             mamba_type=mamba_type,
-            num_layers=2,
+            depth=2,
             d_state=d_state
         )
         

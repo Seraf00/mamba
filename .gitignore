@@ -5,3 +5,6 @@
 **/*.pyc
 **/*.pyo
 *.egg-info/
+
+# ignore the dataset
+data/CAMUS/

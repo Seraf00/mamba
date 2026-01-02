@@ -308,7 +308,7 @@ class MambaTransUNet(nn.Module):
         self.mamba_bottleneck = MambaBottleneck(
             dim=embed_dim,
             mamba_type=mamba_type,
-            num_layers=2,
+            depth=2,
             d_state=d_state
         )
         

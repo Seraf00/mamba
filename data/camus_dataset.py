@@ -87,9 +87,15 @@ class CAMUSPatient:
     
     def get_image_quality(self, view: str = '2CH') -> Optional[str]:
         """Get image quality grade (Good, Medium, Poor)."""
-        quality_map = {0: 'Poor', 1: 'Medium', 2: 'Good'}
         quality = self.info.get(view, {}).get('ImageQuality', None)
-        return quality_map.get(quality, None) if quality is not None else None
+        if quality is None:
+            return None
+        # Handle both string and numeric formats from cfg files
+        if isinstance(quality, str):
+            return quality  # Already a string like "Good", "Medium", "Poor"
+        # Numeric format (some versions of CAMUS use 0, 1, 2)
+        quality_map = {0: 'Poor', 1: 'Medium', 2: 'Good'}
+        return quality_map.get(quality, None)
     
     def get_lv_volumes(self, view: str = '2CH') -> Tuple[Optional[float], Optional[float]]:
         """Get LV volumes at ED and ES."""

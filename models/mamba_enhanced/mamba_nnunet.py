@@ -249,7 +249,7 @@ class MambaNNUNet(nn.Module):
         if use_dual_bottleneck:
             self.bottleneck = DualPathMambaBottleneck(
                 dim=features_per_stage[-1],
-                mamba_type=mamba_type,
+                mamba_types=('mamba', mamba_type),  # Use mamba + specified type
                 d_state=d_state
             )
         else:

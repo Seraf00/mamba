@@ -83,7 +83,7 @@ def get_model(
         num_classes: Number of output classes
         **kwargs: Additional model-specific arguments
             - mamba_type: 'mamba', 'mamba2', or 'vmamba'
-            - pretrained: Use pretrained backbone
+            - pretrained: Use pretrained backbone (for models with pretrained encoders)
             - etc.
             
     Returns:
@@ -103,6 +103,14 @@ def get_model(
     
     model_class = MODEL_REGISTRY[name]
     
+    # Models that support pretrained backbone
+    pretrained_models = {'unet_resnet', 'deeplab_v3', 'transunet', 'fpn',
+                        'mamba_unet_resnet', 'mamba_deeplab', 'mamba_transunet', 'mamba_fpn'}
+    
+    # Filter out pretrained if model doesn't support it
+    if name not in pretrained_models and 'pretrained' in kwargs:
+        kwargs.pop('pretrained')
+    
     # Create model with appropriate arguments
     try:
         model = model_class(
@@ -110,13 +118,16 @@ def get_model(
             num_classes=num_classes,
             **kwargs
         )
-    except TypeError:
-        # Some models may have different arg names
-        model = model_class(
-            in_chans=in_channels,
-            num_classes=num_classes,
-            **kwargs
-        )
+    except TypeError as e:
+        # Only retry with in_chans if the error is specifically about in_channels
+        if "in_channels" in str(e) or "unexpected keyword argument 'in_channels'" in str(e):
+            model = model_class(
+                in_chans=in_channels,
+                num_classes=num_classes,
+                **kwargs
+            )
+        else:
+            raise
     
     return model
 

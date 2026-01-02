@@ -185,7 +185,7 @@ class MambaUNetV1(nn.Module):
                 dim=features[-1],
                 mamba_type=mamba_type,
                 d_state=d_state,
-                num_layers=2
+                depth=2
             )
         
         # Decoder

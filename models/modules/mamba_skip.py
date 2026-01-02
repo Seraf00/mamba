@@ -38,7 +38,10 @@ class MambaSkipConnection(nn.Module):
     allowing the model to selectively use relevant encoder information.
     
     Args:
-        dim: Feature dimension
+        dim: Feature dimension (can also use encoder_channels as alias)
+        encoder_channels: Alias for dim (encoder feature dimension)
+        decoder_channels: Decoder feature dimension (accepted but not used, 
+                         as this module only processes encoder features)
         depth: Number of Mamba blocks
         mamba_type: Type of Mamba block
         d_state: SSM state dimension
@@ -47,7 +50,9 @@ class MambaSkipConnection(nn.Module):
     
     def __init__(
         self,
-        dim: int,
+        dim: int = None,
+        encoder_channels: int = None,
+        decoder_channels: int = None,  # Accepted for API compatibility, not used
         depth: int = 1,
         mamba_type: str = 'vmamba',
         d_state: int = 16,
@@ -59,7 +64,15 @@ class MambaSkipConnection(nn.Module):
     ):
         super().__init__()
         
-        self.dim = dim
+        # Support both 'dim' and 'encoder_channels' as the feature dimension
+        if dim is not None:
+            self.dim = dim
+        elif encoder_channels is not None:
+            self.dim = encoder_channels
+        else:
+            raise ValueError("Either 'dim' or 'encoder_channels' must be provided")
+        
+        dim = self.dim  # Local reference for use below
         
         # Mamba blocks for processing encoder features
         self.mamba_blocks = nn.ModuleList()
@@ -85,12 +98,14 @@ class MambaSkipConnection(nn.Module):
         else:
             self.refine = nn.Identity()
     
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, decoder_feat: torch.Tensor = None) -> torch.Tensor:
         """
         Process encoder skip features.
         
         Args:
             x: Encoder features (B, C, H, W)
+            decoder_feat: Optional decoder features (B, C_dec, H, W) - currently unused,
+                         but accepted for API compatibility with models that pass both.
             
         Returns:
             Processed features (B, C, H, W)
@@ -307,20 +322,29 @@ class GatedMambaSkip(nn.Module):
     with Mamba processing for sequence-aware gating.
     
     Args:
-        encoder_dim: Encoder feature dimension
-        decoder_dim: Decoder feature dimension
+        encoder_dim: Encoder feature dimension (or encoder_channels)
+        decoder_dim: Decoder feature dimension (or decoder_channels)
         mamba_type: Type of Mamba block
     """
     
     def __init__(
         self,
-        encoder_dim: int,
-        decoder_dim: int,
+        encoder_dim: int = None,
+        decoder_dim: int = None,
+        encoder_channels: int = None,  # Alias for encoder_dim
+        decoder_channels: int = None,  # Alias for decoder_dim
         mamba_type: str = 'vmamba',
         d_state: int = 16,
         **kwargs
     ):
         super().__init__()
+        
+        # Support both naming conventions
+        encoder_dim = encoder_dim or encoder_channels
+        decoder_dim = decoder_dim or decoder_channels
+        
+        if encoder_dim is None or decoder_dim is None:
+            raise ValueError("Must provide encoder_dim/encoder_channels and decoder_dim/decoder_channels")
         
         self.encoder_dim = encoder_dim
         self.decoder_dim = decoder_dim

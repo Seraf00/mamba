@@ -16,6 +16,12 @@ from .ejection_fraction import (
     VolumeCalculator,
     BiplaneSimpson
 )
+from .camus_ef_official import (
+    CAMUSEFCalculator,
+    CAMUSEFResult,
+    compute_ejection_fraction,
+    compute_left_ventricle_volumes
+)
 from .efficiency_metrics import (
     EfficiencyBenchmark,
     PortabilityAnalysis,
@@ -35,6 +41,11 @@ __all__ = [
     'EjectionFractionCalculator',
     'VolumeCalculator',
     'BiplaneSimpson',
+    # CAMUS Official EF (Simpson's biplane)
+    'CAMUSEFCalculator',
+    'CAMUSEFResult',
+    'compute_ejection_fraction',
+    'compute_left_ventricle_volumes',
     # Efficiency
     'EfficiencyBenchmark',
     'PortabilityAnalysis',

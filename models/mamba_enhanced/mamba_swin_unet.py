@@ -417,7 +417,9 @@ class MambaSwinUNet(nn.Module):
         window_size: int = 7,
         patch_size: int = 4,
         mamba_type: Literal['mamba', 'mamba2', 'vmamba'] = 'vmamba',
-        d_state: int = 16
+        d_state: int = 16,
+        pretrained: bool = False,  # Ignored, included for API compatibility
+        **kwargs  # Ignore other unknown arguments
     ):
         super().__init__()
         
@@ -453,7 +455,7 @@ class MambaSwinUNet(nn.Module):
         self.bottleneck = MambaBottleneck(
             dim=bottleneck_dim,
             mamba_type=mamba_type,
-            num_layers=2,
+            depth=2,
             d_state=d_state
         )
         

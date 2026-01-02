@@ -226,7 +226,7 @@ class TransUNet(nn.Module):
         self,
         in_channels: int = 1,
         num_classes: int = 4,
-        img_size: int = 224,
+        img_size: int = 256,
         backbone: Literal['resnet50'] = 'resnet50',
         pretrained: bool = True,
         vit_layers: int = 12,
@@ -368,9 +368,7 @@ class TransUNet(nn.Module):
         d1 = self.decoder1(d2, x0)       # /2
         
         # Final decoder (no skip)
-        # Need to create dummy skip with 0 channels
-        d1_up = F.interpolate(d1, scale_factor=2, mode='bilinear', align_corners=True)
-        d0 = self.decoder0.conv(d1_up)   # /1
+        d0 = self.decoder0(d1, None)     # /1
         
         # Output
         out = self.final_conv(d0)

@@ -37,13 +37,11 @@ def get_train_transforms(
         
         # Geometric transforms
         A.HorizontalFlip(p=0.5),
-        A.ShiftScaleRotate(
-            shift_limit=0.1,
-            scale_limit=0.1,
-            rotate_limit=15,
-            border_mode=0,  # cv2.BORDER_CONSTANT
-            value=0,
-            mask_value=0,
+        A.Affine(
+            translate_percent={"x": (-0.1, 0.1), "y": (-0.1, 0.1)},
+            scale=(0.9, 1.1),
+            rotate=(-15, 15),
+            mode=0,  # cv2.BORDER_CONSTANT
             p=0.5
         ),
         
@@ -70,7 +68,7 @@ def get_train_transforms(
         
         # Gaussian noise
         A.GaussNoise(
-            var_limit=(0.001, 0.01),
+            std_range=(0.03, 0.1),
             p=0.3
         ),
         

@@ -619,11 +619,12 @@ class SS2D(nn.Module):
         self.in_proj = nn.Linear(dim, self.d_inner * 2, bias=bias)
         
         # 2D convolution (instead of 1D for spatial features)
+        # Use 'same' padding to preserve spatial dimensions regardless of kernel size
         self.conv2d = nn.Conv2d(
             self.d_inner,
             self.d_inner,
             kernel_size=d_conv,
-            padding=d_conv // 2,
+            padding='same',
             groups=self.d_inner,
             bias=conv_bias
         )

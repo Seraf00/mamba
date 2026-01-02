@@ -193,15 +193,21 @@ class DenseSkipConnection(nn.Module):
         super().__init__()
         
         self.target_size = target_size
+        num_features = len(encoder_channels)
         
-        # Project each encoder feature to same channels
+        # Calculate channels per projection, handling remainder
+        base_ch = out_channels // num_features
+        remainder = out_channels % num_features
+        proj_channels = [base_ch + (1 if i < remainder else 0) for i in range(num_features)]
+        
+        # Project each encoder feature to computed channels
         self.projections = nn.ModuleList([
             nn.Sequential(
-                nn.Conv2d(ch, out_channels // len(encoder_channels), kernel_size=1, bias=False),
-                nn.BatchNorm2d(out_channels // len(encoder_channels)),
+                nn.Conv2d(ch, proj_ch, kernel_size=1, bias=False),
+                nn.BatchNorm2d(proj_ch),
                 nn.ReLU(inplace=True)
             )
-            for ch in encoder_channels
+            for ch, proj_ch in zip(encoder_channels, proj_channels)
         ])
         
         # Fuse projected features
