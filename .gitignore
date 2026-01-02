@@ -1,0 +1,7 @@
+# ignore all venv and cache for python
+.venv/
+.venv-wsl/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+*.egg-info/
