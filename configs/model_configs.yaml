@@ -1,0 +1,168 @@
+# Model Configuration for Mamba-Enhanced Cardiac Segmentation
+
+# Common settings
+common:
+  in_channels: 1  # Grayscale ultrasound
+  num_classes: 4  # Background, LV_endo, LV_epi, LA
+  img_size: [256, 256]
+
+# Mamba SSM settings
+mamba:
+  d_model: 96
+  d_state: 16
+  d_conv: 4
+  expand: 2
+  dt_rank: "auto"
+  dt_min: 0.001
+  dt_max: 0.1
+  dt_init: "random"
+  dt_scale: 1.0
+  dt_init_floor: 1e-4
+  conv_bias: True
+  bias: False
+  use_fast_path: True
+
+# Mamba integration strategies
+mamba_strategies:
+  - encoder      # Replace encoder blocks with Mamba
+  - decoder      # Replace decoder blocks with Mamba
+  - bottleneck   # Mamba only in bottleneck
+  - skip         # Mamba in skip connections
+  - hybrid       # Attention + Mamba combination
+  - full         # Full Mamba replacement
+
+# ============ BASE MODELS ============
+
+# UNet v1 - Classic
+unet_v1:
+  name: "UNet_v1"
+  encoder_channels: [64, 128, 256, 512]
+  decoder_channels: [256, 128, 64]
+  bottleneck_channels: 1024
+  use_batchnorm: True
+  dropout: 0.1
+
+# UNet v2 - With Attention Gates
+unet_v2:
+  name: "UNet_v2"
+  encoder_channels: [64, 128, 256, 512]
+  decoder_channels: [256, 128, 64]
+  bottleneck_channels: 1024
+  use_attention_gates: True
+  attention_type: "additive"
+  use_batchnorm: True
+  dropout: 0.1
+
+# DeepLab v3
+deeplab_v3:
+  name: "DeepLabV3"
+  backbone: "resnet50"
+  output_stride: 16
+  aspp_dilations: [6, 12, 18]
+  aspp_channels: 256
+  pretrained_backbone: True
+
+# nnUNet configuration
+nnunet:
+  name: "nnUNet"
+  encoder_channels: [32, 64, 128, 256, 512]
+  decoder_channels: [256, 128, 64, 32]
+  num_pool_per_axis: [5, 5]
+  conv_kernel_sizes: [[3, 3], [3, 3], [3, 3], [3, 3], [3, 3]]
+  pool_op_kernel_sizes: [[2, 2], [2, 2], [2, 2], [2, 2], [2, 2]]
+  deep_supervision: True
+  instance_norm: True
+
+# GUDU - Gated U-Net with Dense connections
+gudu:
+  name: "GUDU"
+  growth_rate: 32
+  num_layers: [4, 4, 4, 4]
+  bottleneck_channels: 512
+  use_gate: True
+  reduction: 0.5
+
+# Swin-UNet
+swin_unet:
+  name: "SwinUNet"
+  embed_dim: 96
+  depths: [2, 2, 6, 2]
+  num_heads: [3, 6, 12, 24]
+  window_size: 7
+  mlp_ratio: 4.0
+  qkv_bias: True
+  drop_rate: 0.0
+  attn_drop_rate: 0.0
+  drop_path_rate: 0.1
+  patch_size: 4
+
+# TransUNet
+transunet:
+  name: "TransUNet"
+  # CNN encoder
+  cnn_channels: [64, 128, 256]
+  # Transformer config
+  hidden_size: 768
+  transformer_layers: 12
+  num_heads: 12
+  mlp_dim: 3072
+  dropout: 0.1
+  attention_dropout: 0.0
+  patch_size: 16
+  # Decoder
+  decoder_channels: [256, 128, 64]
+  skip_channels: [256, 128, 64]
+
+# Pure Mamba UNet
+pure_mamba_unet:
+  name: "PureMambaUNet"
+  embed_dims: [96, 192, 384, 768]
+  depths: [2, 2, 6, 2]
+  ssm_ratio: 2.0
+  patch_size: 4
+  drop_rate: 0.0
+  drop_path_rate: 0.1
+
+# ============ MAMBA-ENHANCED MODELS ============
+
+mamba_unet_v1:
+  base: "unet_v1"
+  mamba_strategy: "encoder"  # encoder, decoder, bottleneck, skip, hybrid, full
+  mamba_depths: [2, 2, 2, 2]
+  replace_conv: True
+
+mamba_unet_v2:
+  base: "unet_v2"
+  mamba_strategy: "hybrid"
+  mamba_depths: [2, 2, 2, 2]
+  use_mamba_attention: True
+
+mamba_deeplab:
+  base: "deeplab_v3"
+  mamba_strategy: "bottleneck"
+  mamba_aspp: True
+  mamba_depths: [2, 2]
+
+mamba_nnunet:
+  base: "nnunet"
+  mamba_strategy: "encoder"
+  mamba_depths: [2, 2, 2, 2, 2]
+  replace_residual: True
+
+mamba_gudu:
+  base: "gudu"
+  mamba_strategy: "full"
+  mamba_depths: [2, 2, 2, 2]
+  mamba_gate: True
+
+mamba_swin:
+  base: "swin_unet"
+  mamba_strategy: "hybrid"
+  replace_attention: True
+  mamba_window: True
+
+mamba_transunet:
+  base: "transunet"
+  mamba_strategy: "encoder"
+  replace_transformer: True
+  mamba_depths: [2, 2, 2]

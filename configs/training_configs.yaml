@@ -1,0 +1,128 @@
+# Training Configuration for Mamba-Enhanced Cardiac Segmentation
+
+# Dataset settings
+dataset:
+  name: "CAMUS"
+  root_dir: "data/CAMUS"  # Update with your path
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  views: ["2CH", "4CH"]  # 2-chamber and 4-chamber views
+  phases: ["ED", "ES"]   # End-diastolic and End-systolic
+  quality: ["Good", "Medium", "Poor"]  # Image quality grades
+
+# Preprocessing
+preprocessing:
+  img_size: [256, 256]
+  normalize: True
+  mean: 0.5
+  std: 0.5
+
+# Augmentation
+augmentation:
+  train:
+    horizontal_flip: 0.5
+    vertical_flip: 0.0
+    rotate_limit: 15
+    scale_limit: 0.1
+    shift_limit: 0.1
+    brightness_limit: 0.2
+    contrast_limit: 0.2
+    elastic_transform: 
+      enabled: True
+      alpha: 120
+      sigma: 6
+    grid_distortion:
+      enabled: True
+      num_steps: 5
+      distort_limit: 0.3
+  val:
+    # No augmentation for validation
+    enabled: False
+
+# Training hyperparameters
+training:
+  epochs: 200
+  batch_size: 8
+  accumulation_steps: 1
+  
+  # Optimizer
+  optimizer:
+    name: "AdamW"
+    lr: 1e-4
+    weight_decay: 1e-4
+    betas: [0.9, 0.999]
+  
+  # Learning rate scheduler
+  scheduler:
+    name: "CosineAnnealingWarmRestarts"
+    T_0: 50
+    T_mult: 2
+    eta_min: 1e-6
+    warmup_epochs: 5
+    warmup_lr: 1e-6
+  
+  # Loss function
+  loss:
+    name: "combined"
+    components:
+      - name: "DiceLoss"
+        weight: 1.0
+      - name: "CrossEntropyLoss"
+        weight: 1.0
+      - name: "BoundaryLoss"
+        weight: 0.5
+        start_epoch: 50  # Start after initial training
+    
+  # Early stopping
+  early_stopping:
+    enabled: True
+    patience: 30
+    min_delta: 0.001
+    monitor: "val_dice"
+    mode: "max"
+  
+  # Model checkpointing
+  checkpoint:
+    save_best: True
+    save_last: True
+    save_every: 10
+    monitor: "val_dice"
+    mode: "max"
+
+# Mixed precision training
+mixed_precision:
+  enabled: True
+  opt_level: "O1"
+
+# Distributed training
+distributed:
+  enabled: False
+  backend: "nccl"
+  world_size: 1
+
+# Logging
+logging:
+  log_every: 10
+  val_every: 1
+  tensorboard: True
+  wandb:
+    enabled: True
+    project: "mamba-cardiac-segmentation"
+    entity: null  # Your wandb username
+    tags: ["mamba", "cardiac", "segmentation", "camus"]
+
+# Reproducibility
+seed: 42
+deterministic: True
+
+# Hardware
+device: "cuda"
+num_workers: 4
+pin_memory: True
+
+# Paths
+paths:
+  output_dir: "outputs"
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"

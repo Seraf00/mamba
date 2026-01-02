@@ -1,0 +1,158 @@
+# Experiment Configuration for Systematic Mamba Integration Study
+
+# Experiment metadata
+experiment:
+  name: "mamba_cardiac_segmentation_study"
+  version: "1.0"
+  description: "Systematic study of Mamba SSM integration in cardiac segmentation models"
+  author: ""
+  date: "2024"
+
+# Ablation study configurations
+ablation_studies:
+  
+  # Study 1: Mamba integration position
+  mamba_position:
+    name: "Mamba Integration Position"
+    base_model: "unet_v1"
+    variables:
+      - strategy: "encoder"
+        description: "Mamba in encoder only"
+      - strategy: "decoder"  
+        description: "Mamba in decoder only"
+      - strategy: "bottleneck"
+        description: "Mamba in bottleneck only"
+      - strategy: "skip"
+        description: "Mamba in skip connections"
+      - strategy: "full"
+        description: "Full Mamba replacement"
+    metrics: ["dice", "hd95", "params", "flops", "inference_time"]
+
+  # Study 2: Mamba depth analysis
+  mamba_depth:
+    name: "Mamba Block Depth"
+    base_model: "mamba_unet_v1"
+    strategy: "encoder"
+    variables:
+      - depths: [1, 1, 1, 1]
+      - depths: [2, 2, 2, 2]
+      - depths: [3, 3, 3, 3]
+      - depths: [2, 2, 4, 2]
+    metrics: ["dice", "params", "inference_time"]
+
+  # Study 3: Mamba state dimension
+  mamba_state_dim:
+    name: "State Space Dimension"
+    base_model: "mamba_unet_v1"
+    variables:
+      - d_state: 8
+      - d_state: 16
+      - d_state: 32
+      - d_state: 64
+    metrics: ["dice", "memory", "inference_time"]
+
+  # Study 4: Model comparison
+  model_comparison:
+    name: "Base vs Mamba-Enhanced Models"
+    pairs:
+      - base: "unet_v1"
+        enhanced: "mamba_unet_v1"
+      - base: "unet_v2"
+        enhanced: "mamba_unet_v2"
+      - base: "deeplab_v3"
+        enhanced: "mamba_deeplab"
+      - base: "nnunet"
+        enhanced: "mamba_nnunet"
+      - base: "gudu"
+        enhanced: "mamba_gudu"
+      - base: "swin_unet"
+        enhanced: "mamba_swin"
+      - base: "transunet"
+        enhanced: "mamba_transunet"
+    metrics: ["dice", "iou", "hd95", "ef_correlation", "params", "flops", "inference_time", "memory"]
+
+# Benchmark configurations
+benchmarks:
+  
+  # Segmentation quality
+  segmentation:
+    metrics:
+      - name: "dice"
+        per_class: True
+        classes: ["LV_endo", "LV_epi", "LA"]
+      - name: "iou"
+        per_class: True
+      - name: "hausdorff_95"
+        per_class: True
+      - name: "assd"  # Average symmetric surface distance
+        per_class: True
+      - name: "precision"
+        per_class: True
+      - name: "recall"
+        per_class: True
+
+  # Clinical metrics
+  clinical:
+    metrics:
+      - name: "ef_mae"
+        description: "Ejection Fraction Mean Absolute Error"
+      - name: "ef_correlation"
+        description: "Pearson correlation with ground truth EF"
+      - name: "ef_bland_altman"
+        description: "Bland-Altman analysis for EF"
+      - name: "lv_volume_correlation"
+        description: "LV volume correlation"
+
+  # Efficiency metrics
+  efficiency:
+    metrics:
+      - name: "total_params"
+        unit: "M"
+      - name: "trainable_params"
+        unit: "M"
+      - name: "flops"
+        unit: "GFLOPs"
+      - name: "inference_time"
+        unit: "ms"
+        batch_sizes: [1, 4, 8, 16]
+        warmup_iterations: 50
+        measure_iterations: 200
+      - name: "memory_usage"
+        unit: "GB"
+      - name: "model_size"
+        unit: "MB"
+
+  # Robustness testing
+  robustness:
+    tests:
+      - name: "image_quality"
+        subsets: ["Good", "Medium", "Poor"]
+      - name: "noise_robustness"
+        noise_levels: [0.01, 0.05, 0.1, 0.2]
+      - name: "contrast_variation"
+        contrast_factors: [0.5, 0.75, 1.0, 1.25, 1.5]
+
+# Cross-validation settings
+cross_validation:
+  enabled: True
+  n_folds: 5
+  stratified: True
+  stratify_by: "image_quality"
+
+# Statistical analysis
+statistics:
+  significance_test: "wilcoxon"
+  confidence_level: 0.95
+  multiple_comparison_correction: "bonferroni"
+
+# Results output
+results:
+  save_predictions: True
+  save_visualizations: True
+  generate_latex_tables: True
+  generate_plots:
+    - "box_plots"
+    - "bar_charts"
+    - "scatter_plots"
+    - "bland_altman"
+    - "roc_curves"

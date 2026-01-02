@@ -1,0 +1,35 @@
+# Results Directory
+
+This directory stores experiment results and outputs.
+
+## Structure
+
+```
+results/
+├── experiment_name/
+│   ├── results.json              # Aggregated metrics
+│   ├── model_name/
+│   │   ├── predictions/          # Saved predictions
+│   │   ├── visualizations/       # Generated plots
+│   │   └── metrics.csv           # Per-sample metrics
+│   └── comparison.png            # Model comparison plot
+├── explainability/
+│   ├── gradcam/                  # Grad-CAM visualizations
+│   ├── attention_maps/           # Attention visualizations
+│   ├── uncertainty/              # Uncertainty maps
+│   └── clinical_reports/         # Clinical reports
+└── benchmark/
+    ├── efficiency_report.json    # Speed/memory benchmarks
+    └── portability_analysis.json # Deployment analysis
+```
+
+## Accessing Results
+
+```python
+import json
+
+with open('results/experiment/results.json') as f:
+    results = json.load(f)
+    
+print(results['mamba_unet_v1']['evaluation']['dice_mean'])
+```
