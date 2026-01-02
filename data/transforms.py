@@ -41,7 +41,7 @@ def get_train_transforms(
             translate_percent={"x": (-0.1, 0.1), "y": (-0.1, 0.1)},
             scale=(0.9, 1.1),
             rotate=(-15, 15),
-            mode=0,  # cv2.BORDER_CONSTANT
+            border_mode=0,  # cv2.BORDER_CONSTANT
             p=0.5
         ),
         

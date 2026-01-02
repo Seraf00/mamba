@@ -409,6 +409,7 @@ class CAMUSDataset(Dataset):
             images, masks = patient.load_half_sequence(view)
             image = images[frame_idx]
             mask = masks[frame_idx]
+            phase = f'seq_{frame_idx}'  # Mark as sequence frame
         else:
             # Load ED/ES frame
             phase = sample_info['phase']
@@ -434,22 +435,25 @@ class CAMUSDataset(Dataset):
         if image.ndim == 2:
             image = image.unsqueeze(0)
         
-        output = {
-            'image': image,
-            'mask': mask,
-            'patient_id': sample_info['patient_id'],
-            'view': view,
-            'phase': phase
-        }
-        
+        # Return tuple (image, mask) for training compatibility
+        # Use include_info=True to get full dictionary with metadata
         if self.include_info:
-            output['ef'] = patient.get_ef(view) or -1.0
-            output['quality'] = patient.get_image_quality(view) or 'Unknown'
+            output = {
+                'image': image,
+                'mask': mask,
+                'patient_id': sample_info['patient_id'],
+                'view': view,
+                'phase': phase,
+                'ef': patient.get_ef(view) or -1.0,
+                'quality': patient.get_image_quality(view) or 'Unknown',
+            }
             ed_vol, es_vol = patient.get_lv_volumes(view)
             output['lv_ed_volume'] = ed_vol or -1.0
             output['lv_es_volume'] = es_vol or -1.0
+            return output
         
-        return output
+        # Default: return tuple for standard training loops
+        return image, mask
     
     def get_patient_pairs(self, patient_id: str, view: str) -> Tuple[Dict, Dict]:
         """
