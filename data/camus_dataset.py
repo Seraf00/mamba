@@ -114,11 +114,14 @@ class CAMUSPatient:
         Returns:
             Image as numpy array (H, W)
         """
-        filename = f'{self.patient_id}_{view}_{phase}.nii'
-        filepath = self.patient_dir / filename
-        
-        if not filepath.exists():
-            raise FileNotFoundError(f"Image not found: {filepath}")
+        # Try both .nii and .nii.gz extensions
+        for ext in ['.nii.gz', '.nii']:
+            filename = f'{self.patient_id}_{view}_{phase}{ext}'
+            filepath = self.patient_dir / filename
+            if filepath.exists():
+                break
+        else:
+            raise FileNotFoundError(f"Image not found: {self.patient_dir}/{self.patient_id}_{view}_{phase}.[nii|nii.gz]")
         
         image_array = load_nifti(filepath)
         
@@ -149,6 +152,14 @@ class CAMUSPatient:
         Returns:
             Segmentation mask as numpy array (H, W)
         """
+        # Try both .nii and .nii.gz extensions
+        for ext in ['.nii.gz', '.nii']:
+            filename = f'{self.patient_id}_{view}_{phase}_gt{ext}'
+            filepath = self.patient_dir / filename
+            if filepath.exists():
+                break
+        else:
+            raise FileNotFoundError(f"Segmentation not found: {self.patient_dir}/{self.patient_id}_{view}_{phase}_gt.[nii|nii.gz]")
         filename = f'{self.patient_id}_{view}_{phase}_gt.nii'
         filepath = self.patient_dir / filename
         
@@ -176,16 +187,25 @@ class CAMUSPatient:
         Returns:
             Tuple of (images, segmentations) as numpy arrays (T, H, W)
         """
-        img_filename = f'{self.patient_id}_{view}_half_sequence.nii'
-        gt_filename = f'{self.patient_id}_{view}_half_sequence_gt.nii'
+        # Try both .nii and .nii.gz extensions for images
+        img_filepath = None
+        for ext in ['.nii.gz', '.nii']:
+            filepath = self.patient_dir / f'{self.patient_id}_{view}_half_sequence{ext}'
+            if filepath.exists():
+                img_filepath = filepath
+                break
+        if img_filepath is None:
+            raise FileNotFoundError(f"Half sequence not found: {self.patient_dir}/{self.patient_id}_{view}_half_sequence.[nii|nii.gz]")
         
-        img_filepath = self.patient_dir / img_filename
-        gt_filepath = self.patient_dir / gt_filename
-        
-        if not img_filepath.exists():
-            raise FileNotFoundError(f"Half sequence not found: {img_filepath}")
-        if not gt_filepath.exists():
-            raise FileNotFoundError(f"Half sequence GT not found: {gt_filepath}")
+        # Try both .nii and .nii.gz extensions for ground truth
+        gt_filepath = None
+        for ext in ['.nii.gz', '.nii']:
+            filepath = self.patient_dir / f'{self.patient_id}_{view}_half_sequence_gt{ext}'
+            if filepath.exists():
+                gt_filepath = filepath
+                break
+        if gt_filepath is None:
+            raise FileNotFoundError(f"Half sequence GT not found: {self.patient_dir}/{self.patient_id}_{view}_half_sequence_gt.[nii|nii.gz]")
         
         images = load_nifti(img_filepath)
         segmentations = load_nifti(gt_filepath)
@@ -343,6 +363,13 @@ class CAMUSDataset(Dataset):
         """Build index of all samples (patient, view, phase combinations)."""
         samples = []
         
+        def file_exists(patient_dir, pattern):
+            """Check if file exists with .nii or .nii.gz extension."""
+            for ext in ['.nii.gz', '.nii']:
+                if (patient_dir / f'{pattern}{ext}').exists():
+                    return True
+            return False
+        
         for patient in self.patients:
             for view in self.views:
                 # Check quality filter
@@ -353,12 +380,12 @@ class CAMUSDataset(Dataset):
                 
                 # Add ED/ES frames
                 for phase in self.phases:
-                    # Verify files exist
+                    # Verify files exist (check both .nii and .nii.gz)
                     try:
-                        img_path = patient.patient_dir / f'{patient.patient_id}_{view}_{phase}.nii'
-                        seg_path = patient.patient_dir / f'{patient.patient_id}_{view}_{phase}_gt.nii'
+                        img_pattern = f'{patient.patient_id}_{view}_{phase}'
+                        seg_pattern = f'{patient.patient_id}_{view}_{phase}_gt'
                         
-                        if img_path.exists() and seg_path.exists():
+                        if file_exists(patient.patient_dir, img_pattern) and file_exists(patient.patient_dir, seg_pattern):
                             samples.append({
                                 'patient': patient,
                                 'view': view,
@@ -373,10 +400,10 @@ class CAMUSDataset(Dataset):
                 # Add half sequence frames if requested
                 if self.include_sequences:
                     try:
-                        seq_path = patient.patient_dir / f'{patient.patient_id}_{view}_half_sequence.nii'
-                        gt_path = patient.patient_dir / f'{patient.patient_id}_{view}_half_sequence_gt.nii'
+                        seq_pattern = f'{patient.patient_id}_{view}_half_sequence'
+                        gt_pattern = f'{patient.patient_id}_{view}_half_sequence_gt'
                         
-                        if seq_path.exists() and gt_path.exists():
+                        if file_exists(patient.patient_dir, seq_pattern) and file_exists(patient.patient_dir, gt_pattern):
                             # Load to get number of frames
                             images, _ = patient.load_half_sequence(view)
                             n_frames = images.shape[0]
