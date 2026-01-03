@@ -115,12 +115,15 @@ class CAMUSPatient:
             Image as numpy array (H, W)
         """
         # Try both .nii and .nii.gz extensions
+        filepath = None
         for ext in ['.nii.gz', '.nii']:
             filename = f'{self.patient_id}_{view}_{phase}{ext}'
-            filepath = self.patient_dir / filename
-            if filepath.exists():
+            candidate_path = self.patient_dir / filename
+            if candidate_path.exists():
+                filepath = candidate_path
                 break
-        else:
+        
+        if filepath is None:
             raise FileNotFoundError(f"Image not found: {self.patient_dir}/{self.patient_id}_{view}_{phase}.[nii|nii.gz]")
         
         image_array = load_nifti(filepath)
@@ -153,18 +156,16 @@ class CAMUSPatient:
             Segmentation mask as numpy array (H, W)
         """
         # Try both .nii and .nii.gz extensions
+        filepath = None
         for ext in ['.nii.gz', '.nii']:
             filename = f'{self.patient_id}_{view}_{phase}_gt{ext}'
-            filepath = self.patient_dir / filename
-            if filepath.exists():
+            candidate_path = self.patient_dir / filename
+            if candidate_path.exists():
+                filepath = candidate_path
                 break
-        else:
-            raise FileNotFoundError(f"Segmentation not found: {self.patient_dir}/{self.patient_id}_{view}_{phase}_gt.[nii|nii.gz]")
-        filename = f'{self.patient_id}_{view}_{phase}_gt.nii'
-        filepath = self.patient_dir / filename
         
-        if not filepath.exists():
-            raise FileNotFoundError(f"Segmentation not found: {filepath}")
+        if filepath is None:
+            raise FileNotFoundError(f"Segmentation not found: {self.patient_dir}/{self.patient_id}_{view}_{phase}_gt.[nii|nii.gz]")
         
         seg_array = load_nifti(filepath)
         
@@ -362,6 +363,7 @@ class CAMUSDataset(Dataset):
     def _build_sample_index(self) -> List[Dict]:
         """Build index of all samples (patient, view, phase combinations)."""
         samples = []
+        skipped_count = 0
         
         def file_exists(patient_dir, pattern):
             """Check if file exists with .nii or .nii.gz extension."""
@@ -385,6 +387,7 @@ class CAMUSDataset(Dataset):
                         img_pattern = f'{patient.patient_id}_{view}_{phase}'
                         seg_pattern = f'{patient.patient_id}_{view}_{phase}_gt'
                         
+                        # Check if both files exist before adding sample
                         if file_exists(patient.patient_dir, img_pattern) and file_exists(patient.patient_dir, seg_pattern):
                             samples.append({
                                 'patient': patient,
@@ -394,8 +397,16 @@ class CAMUSDataset(Dataset):
                                 'is_sequence': False,
                                 'frame_idx': None
                             })
+                        else:
+                            # Log when files are missing
+                            if not file_exists(patient.patient_dir, img_pattern):
+                                warnings.warn(f"Missing image: {patient.patient_id}/{view}/{phase}")
+                            if not file_exists(patient.patient_dir, seg_pattern):
+                                warnings.warn(f"Missing segmentation: {patient.patient_id}/{view}/{phase}")
+                            skipped_count += 1
                     except Exception as e:
                         warnings.warn(f"Error checking {patient.patient_id}/{view}/{phase}: {e}")
+                        skipped_count += 1
                 
                 # Add half sequence frames if requested
                 if self.include_sequences:
@@ -417,8 +428,17 @@ class CAMUSDataset(Dataset):
                                     'is_sequence': True,
                                     'frame_idx': frame_idx
                                 })
+                        else:
+                            if not file_exists(patient.patient_dir, seq_pattern):
+                                warnings.warn(f"Missing half sequence: {patient.patient_id}/{view}")
+                            if not file_exists(patient.patient_dir, gt_pattern):
+                                warnings.warn(f"Missing half sequence GT: {patient.patient_id}/{view}")
                     except Exception as e:
                         warnings.warn(f"Error loading sequence {patient.patient_id}/{view}: {e}")
+                        skipped_count += 1
+        
+        if skipped_count > 0:
+            warnings.warn(f"Skipped {skipped_count} samples due to missing or corrupted files")
         
         return samples
     
