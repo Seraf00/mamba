@@ -30,6 +30,7 @@ import sys
 import os
 import json
 import time
+import gc
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
@@ -46,6 +47,16 @@ from training import Trainer, TrainingConfig, CombinedLoss
 from training.callbacks import EarlyStopping, ModelCheckpoint, TensorBoardLogger, CSVLogger
 from metrics import SegmentationMetrics, EfficiencyBenchmark
 from utils import set_seed, get_device
+
+
+def cleanup_gpu_memory():
+    """Aggressively clean up GPU memory."""
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        # Reset memory stats for accurate tracking
+        torch.cuda.reset_peak_memory_stats()
 
 
 # ============================================================================
@@ -247,12 +258,17 @@ def train_single_model(
     Returns:
         Dictionary with training results and metrics
     """
+    # Clean GPU memory before starting new model
+    cleanup_gpu_memory()
+    
     model_name = model_config['name']
     mamba_type = model_config['mamba_type']
     display_name = model_config['display_name']
     
     print(f"\n{'='*70}")
     print(f"Training: {display_name}")
+    if torch.cuda.is_available():
+        print(f"GPU memory before: {torch.cuda.memory_allocated() / 1024**2:.1f}MB allocated")
     print(f"{'='*70}")
     
     # Set seed for reproducibility
@@ -405,9 +421,21 @@ def train_single_model(
     with open(model_dir / 'results.json', 'w') as f:
         json.dump(results, f, indent=2)
     
-    # Clean up GPU memory
-    del model, trainer
-    torch.cuda.empty_cache()
+    # Aggressively clean up GPU memory
+    # Delete all objects that may hold GPU references
+    del model
+    del trainer
+    del train_loader
+    del val_loader
+    del train_dataset
+    del val_dataset
+    
+    # Force garbage collection and clear CUDA cache
+    cleanup_gpu_memory()
+    
+    print(f"  Memory cleaned. GPU memory after cleanup: "
+          f"{torch.cuda.memory_allocated() / 1024**2:.1f}MB allocated, "
+          f"{torch.cuda.memory_reserved() / 1024**2:.1f}MB reserved" if torch.cuda.is_available() else "")
     
     return results
 
@@ -488,6 +516,9 @@ def main():
                 'display_name': model_config['display_name'],
                 'error': str(e)
             })
+        finally:
+            # Always clean up GPU memory between models
+            cleanup_gpu_memory()
     
     total_time = time.time() - total_start
     
