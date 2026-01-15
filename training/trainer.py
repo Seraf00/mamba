@@ -5,12 +5,12 @@ Training loop and trainer class for cardiac segmentation.
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast
 import numpy as np
 from typing import Optional, Dict, Callable, List
 from dataclasses import dataclass, field
 from pathlib import Path
 import time
+import gc
 from tqdm import tqdm
 
 from metrics import SegmentationMetrics
@@ -85,8 +85,11 @@ class Trainer:
         # Scheduler
         self.scheduler = self._create_scheduler()
         
-        # Mixed precision
-        self.scaler = GradScaler() if config.use_amp else None
+        # Mixed precision - use new API
+        if config.use_amp:
+            self.scaler = torch.amp.GradScaler('cuda')
+        else:
+            self.scaler = None
         
         # Metrics
         self.metrics = SegmentationMetrics(num_classes=4)
@@ -265,7 +268,7 @@ class Trainer:
             
             # Forward pass with mixed precision
             if self.config.use_amp and self.scaler is not None:
-                with autocast():
+                with torch.amp.autocast('cuda'):
                     outputs = self.model(images)
                     if isinstance(outputs, dict):
                         outputs = outputs['out']

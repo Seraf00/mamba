@@ -382,14 +382,22 @@ class Mamba2Block(nn.Module):
         self.d_conv = d_conv
         self.expand = expand
         self.d_inner = int(dim * expand)
+        
+        # Adjust n_heads to be a valid divisor of d_inner
+        # Find the largest divisor <= n_heads that divides d_inner
+        original_n_heads = n_heads
+        while n_heads > 1 and self.d_inner % n_heads != 0:
+            n_heads -= 1
+        if self.d_inner % n_heads != 0:
+            n_heads = 1  # Fallback to single head
+        
         self.n_heads = n_heads
         self.head_dim = head_dim or (self.d_inner // n_heads)
         self.chunk_size = chunk_size
         
-        assert self.d_inner % n_heads == 0, "d_inner must be divisible by n_heads"
-        
         # Input projection: x -> (z, x, B, C, dt)
-        d_in_proj = self.d_inner + self.d_inner + n_heads + d_state + d_state
+        # dt should have n_heads elements to match dt_bias
+        d_in_proj = self.d_inner + self.d_inner + d_state + d_state + n_heads
         self.in_proj = nn.Linear(dim, d_in_proj, bias=bias)
         
         # Depthwise convolution on x
@@ -435,9 +443,9 @@ class Mamba2Block(nn.Module):
         # Input projection
         zxBCdt = self.in_proj(x)
         
-        # Split projections
+        # Split projections: z, x, B, C, dt
         z, x, B, C, dt = zxBCdt.split(
-            [self.d_inner, self.d_inner, self.n_heads, self.d_state, self.d_state],
+            [self.d_inner, self.d_inner, self.d_state, self.d_state, self.n_heads],
             dim=-1
         )
         

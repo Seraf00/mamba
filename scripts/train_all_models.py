@@ -59,6 +59,36 @@ def cleanup_gpu_memory():
         torch.cuda.reset_peak_memory_stats()
 
 
+def get_batch_size_for_model(model_name: str, default_batch_size: int, num_params: int) -> int:
+    """
+    Get appropriate batch size based on model size to avoid OOM.
+    
+    Args:
+        model_name: Name of the model
+        default_batch_size: Default batch size from args
+        num_params: Number of model parameters
+        
+    Returns:
+        Adjusted batch size
+    """
+    # Models that are known to be memory-hungry
+    large_models = ['mamba', 'vmamba', 'fpn', 'gudu', 'deeplab']
+    
+    # Check if model is memory-intensive
+    is_mamba = any(m in model_name.lower() for m in ['mamba', 'vmamba'])
+    is_large = any(m in model_name.lower() for m in large_models)
+    
+    # Adjust based on parameter count
+    if num_params > 80e6:  # >80M params
+        return min(default_batch_size, 2)
+    elif num_params > 50e6 or is_mamba:  # >50M or any Mamba model
+        return min(default_batch_size, 4)
+    elif num_params > 30e6 or is_large:  # >30M or known large models
+        return min(default_batch_size, 6)
+    else:
+        return default_batch_size
+
+
 # ============================================================================
 # Model Definitions
 # ============================================================================
@@ -299,23 +329,7 @@ def train_single_model(
     print(f"  Val samples: {len(val_dataset)}")
     print(f"  Image size: {img_size}x{img_size}")
     
-    # Create data loaders
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=True
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        pin_memory=True
-    )
-    
-    # Create model
+    # Create model first to determine appropriate batch size
     model_kwargs = {'in_channels': 1, 'num_classes': 4}
     if mamba_type:
         model_kwargs['mamba_type'] = mamba_type
@@ -325,7 +339,30 @@ def train_single_model(
     
     num_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    
+    # Get adjusted batch size based on model size
+    batch_size = get_batch_size_for_model(model_name, args.batch_size, num_params)
+    if batch_size != args.batch_size:
+        print(f"  Adjusted batch size: {args.batch_size} -> {batch_size} (model has {num_params/1e6:.1f}M params)")
+    
     print(f"  Parameters: {num_params/1e6:.2f}M ({trainable_params/1e6:.2f}M trainable)")
+    print(f"  Batch size: {batch_size}")
+    
+    # Create data loaders with adjusted batch size
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=True
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True
+    )
     
     # Create model save directory
     model_dir = exp_dir / display_name
@@ -337,10 +374,10 @@ def train_single_model(
         ce_weight=args.ce_weight
     )
     
-    # Training config
+    # Training config - use adjusted batch size
     config = TrainingConfig(
         epochs=args.epochs,
-        batch_size=args.batch_size,
+        batch_size=batch_size,  # Use adjusted batch size
         learning_rate=args.lr,
         weight_decay=args.weight_decay,
         optimizer=args.optimizer,
