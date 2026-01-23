@@ -71,7 +71,7 @@ except Exception as e:
 if MAMBA_AVAILABLE:
     print("\n4. Performance test (all variants)...")
     try:
-        from models.modules import MambaBlock, VMMambaBlock
+        from models.modules import MambaBlock, Mamba2Block, VMMambaBlock
         import time
         
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -97,7 +97,27 @@ if MAMBA_AVAILABLE:
         print(f"     32x32 image: {elapsed*1000:.2f}ms")
         print(f"     Estimated 256x256: {elapsed * 64:.2f}s")
         
-        # Test VMMambaBlock (4x slower due to 4 scans)
+        # Test Mamba2Block (multi-head)
+        print("\n   Testing Mamba2Block (8 heads):")
+        mamba2 = Mamba2Block(dim=64, d_state=16, n_heads=8).to(device)
+        
+        with torch.no_grad():
+            _ = mamba2(x_test)
+        
+        if device == 'cuda':
+            torch.cuda.synchronize()
+        start = time.time()
+        with torch.no_grad():
+            _ = mamba2(x_test)
+        if device == 'cuda':
+            torch.cuda.synchronize()
+        elapsed_m2 = time.time() - start
+        
+        print(f"     32x32 image: {elapsed_m2*1000:.2f}ms")
+        print(f"     Estimated 256x256: {elapsed_m2 * 64:.2f}s")
+        print(f"     Note: Mamba2 with 8 heads processes each head separately")
+        
+        # Test VMMambaBlock (4-direction scan)
         print("\n   Testing VMMambaBlock (4-direction scan):")
         vmblock = VMMambaBlock(dim=64, d_state=16).to(device)
         
@@ -117,9 +137,24 @@ if MAMBA_AVAILABLE:
         print(f"     Estimated 256x256: {elapsed_vm * 64:.2f}s")
         
         # Warning if too slow
-        if elapsed * 64 > 10 or elapsed_vm * 64 > 40:
-            print("\n   ⚠ CRITICAL: Performance is too slow!")
-            print("   The slow Python implementation is likely being used.")
+        print("\n   Performance Analysis:")
+        if elapsed * 64 > 10:
+            print("     ⚠ MambaBlock: TOO SLOW - using Python implementation!")
+        else:
+            print(f"     ✓ MambaBlock: Good ({elapsed * 64:.1f}s for 256x256)")
+            
+        if elapsed_m2 * 64 > 30:
+            print("     ⚠ Mamba2Block: TOO SLOW - using Python implementation!")
+        elif elapsed_m2 * 64 > 15:
+            print(f"     ⚠ Mamba2Block: Acceptable but slow ({elapsed_m2 * 64:.1f}s for 256x256)")
+            print("       This is expected with 8 heads - consider using fewer heads or MambaBlock")
+        else:
+            print(f"     ✓ Mamba2Block: Good ({elapsed_m2 * 64:.1f}s for 256x256)")
+            
+        if elapsed_vm * 64 > 40:
+            print("     ⚠ VMMambaBlock: TOO SLOW - using Python implementation!")
+        else:
+            print(f"     ✓ VMMambaBlock: Good ({elapsed_vm * 64:.1f}s for 256x256)")
             
     except Exception as e:
         print(f"   Error during performance test: {e}")
