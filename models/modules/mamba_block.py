@@ -122,6 +122,39 @@ class MambaBlock(nn.Module):
         self.dt_rank = math.ceil(dim / 16) if dt_rank == "auto" else dt_rank
         self.use_fast_path = use_fast_path and MAMBA_AVAILABLE
         
+        # If we can use the native Mamba implementation, do so
+        if self.use_fast_path:
+            try:
+                self.mamba_native = Mamba(
+                    d_model=dim,
+                    d_state=d_state,
+                    d_conv=d_conv,
+                    expand=expand,
+                    dt_rank=dt_rank,
+                    dt_min=dt_min,
+                    dt_max=dt_max,
+                    dt_init=dt_init,
+                    dt_scale=dt_scale,
+                    dt_init_floor=dt_init_floor,
+                    bias=bias,
+                    conv_bias=conv_bias,
+                )
+                # Flag that we're using native implementation
+                self._use_native = True
+            except:
+                # Fall back to manual implementation
+                self._use_native = False
+        else:
+            self._use_native = False
+        
+        # Only initialize manual components if not using native
+        if not self._use_native:
+            self._init_manual_components(dim, d_state, d_conv, expand, dt_rank, 
+                                         dt_min, dt_max, dt_init_floor, bias, conv_bias)
+    
+    def _init_manual_components(self, dim, d_state, d_conv, expand, dt_rank,
+                                dt_min, dt_max, dt_init_floor, bias, conv_bias):
+        """Initialize components for manual (non-native) implementation."""
         # Input projection
         self.in_proj = nn.Linear(dim, self.d_inner * 2, bias=bias)
         
@@ -178,28 +211,33 @@ class MambaBlock(nn.Module):
             B, C, H, W = x.shape
             x = rearrange(x, 'b c h w -> b (h w) c')
         
-        batch_size, seq_len, _ = x.shape
-        
-        # Input projection and split
-        xz = self.in_proj(x)  # (B, L, 2*d_inner)
-        x, z = xz.chunk(2, dim=-1)  # Each (B, L, d_inner)
-        
-        # Convolution
-        x = rearrange(x, 'b l d -> b d l')
-        x = self.conv1d(x)[:, :, :seq_len]
-        x = rearrange(x, 'b d l -> b l d')
-        
-        # Activation
-        x = F.silu(x)
-        
-        # SSM
-        y = self.ssm(x)
-        
-        # Gating
-        y = y * F.silu(z)
-        
-        # Output projection
-        output = self.out_proj(y)
+        # If using native Mamba implementation, use it directly
+        if self._use_native:
+            output = self.mamba_native(x)
+        else:
+            # Manual implementation
+            batch_size, seq_len, _ = x.shape
+            
+            # Input projection and split
+            xz = self.in_proj(x)  # (B, L, 2*d_inner)
+            x, z = xz.chunk(2, dim=-1)  # Each (B, L, d_inner)
+            
+            # Convolution
+            x = rearrange(x, 'b l d -> b d l')
+            x = self.conv1d(x)[:, :, :seq_len]
+            x = rearrange(x, 'b d l -> b l d')
+            
+            # Activation
+            x = F.silu(x)
+            
+            # SSM
+            y = self.ssm(x)
+            
+            # Gating
+            y = y * F.silu(z)
+            
+            # Output projection
+            output = self.out_proj(y)
         
         if is_2d:
             output = rearrange(output, 'b (h w) c -> b c h w', h=H, w=W)
@@ -209,6 +247,7 @@ class MambaBlock(nn.Module):
     def ssm(self, x: torch.Tensor) -> torch.Tensor:
         """
         Selective State Space Model computation.
+        Only called when not using native Mamba implementation.
         
         Args:
             x: Input tensor (B, L, D)
@@ -229,22 +268,9 @@ class MambaBlock(nn.Module):
         # Project delta
         delta = F.softplus(self.dt_proj(delta))  # (B, L, d_inner)
         
-        # Use fast CUDA kernels if available, otherwise fallback to Python
-        if self.use_fast_path:
-            # Use optimized selective_scan_fn from mamba-ssm (100-1000x faster!)
-            y = selective_scan_fn(
-                x.contiguous(),
-                delta.contiguous(),
-                A.contiguous(),
-                B.contiguous(),
-                C.contiguous(),
-                D.float().contiguous(),
-                z=None,
-                return_last_state=False
-            )
-        else:
-            # Fallback to pure PyTorch implementation (slow)
-            y = self.selective_scan(x, delta, A, B, C, D)
+        # Always use Python fallback for manual implementation
+        # (Native Mamba handles fast path in forward())
+        y = self.selective_scan(x, delta, A, B, C, D)
         
         return y
     
