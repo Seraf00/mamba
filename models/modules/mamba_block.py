@@ -568,41 +568,44 @@ class Mamba2Block(nn.Module):
                 # selective_scan_fn expects A: (D, N) where D matches the last dim of u
                 # When we process (B*H, L, D), D=head_dim, so A should be (head_dim, d_state)
                 
-                # Prepare A: (H,) -> replicate for each feature dimension within a head
-                # A is per-head, so we need one A matrix per head: (head_dim, d_state)
-                # But A is scalar per head, so expand it properly
-                A_expanded = A.view(n_heads, 1, 1).expand(-1, 1, d_state)  # (H, 1, N)
-                A_ssm = A_expanded.expand(-1, head_dim, -1).reshape(n_heads * head_dim, d_state)  # (H*D, N)
+                # Prepare A: Since A is per-head scalar (H,), we need to create
+                # A matrix of shape (head_dim, d_state) where each row uses the same A value
+                # We'll replicate A across feature dimension
+                A_ssm = A.view(n_heads, 1, 1).expand(-1, head_dim, d_state)  # (H, D, N)
+                # For selective_scan_fn, we need (D, N) - use first head's A as they're processed separately
+                # Actually, we'll process each head separately in a loop instead
                 
-                # Process all heads together by treating (B, H) as a combined batch dimension
-                # Reshape: (B, L, H, D) -> (B, H, L, D) -> (B*H, L, D)
-                x_reshaped = x.permute(0, 2, 1, 3).reshape(batch_size * n_heads, seq_len, head_dim)
+                # Process each head separately since each has its own A parameter
+                y_heads = []
+                for h in range(n_heads):
+                    # Extract data for this head
+                    x_h = x[:, :, h, :]  # (B, L, head_dim)
+                    dt_h = dt[:, :, h].unsqueeze(-1).expand(-1, -1, head_dim)  # (B, L, head_dim)
+                    
+                    # Create A matrix for this head: (head_dim, d_state)
+                    # Each row has the same A value replicated across the state dimension
+                    A_h = A[h].view(1, 1).expand(head_dim, d_state)  # (head_dim, d_state)
+                    
+                    # D parameter for skip connection (no skip for now)
+                    D_param = torch.zeros(head_dim, device=x.device, dtype=x.dtype)
+                    
+                    # Call selective_scan_fn for this head
+                    y_h = selective_scan_fn(
+                        x_h.contiguous(),
+                        dt_h.contiguous(),
+                        A_h.contiguous(),
+                        B.contiguous(),  # (B, L, d_state)
+                        C.contiguous(),  # (B, L, d_state)
+                        D_param.contiguous(),
+                        z=None,
+                        delta_bias=None,
+                        delta_softplus=False,  # dt already processed
+                        return_last_state=False
+                    )
+                    y_heads.append(y_h)
                 
-                # dt: (B, L, H) -> (B, H, L) -> (B*H, L) -> (B*H, L, 1) -> expand to (B*H, L, D)
-                dt_reshaped = dt.permute(0, 2, 1).reshape(batch_size * n_heads, seq_len, 1).expand(-1, -1, head_dim)
-                
-                # B, C: (B, L, N) -> expand for heads -> (B, H, L, N) -> (B*H, L, N)
-                B_expanded = B.unsqueeze(1).expand(-1, n_heads, -1, -1).reshape(batch_size * n_heads, seq_len, d_state)
-                C_expanded = C.unsqueeze(1).expand(-1, n_heads, -1, -1).reshape(batch_size * n_heads, seq_len, d_state)
-                
-                # D parameter: zeros for no skip (one per feature dimension)
-                D_param = torch.zeros(head_dim, device=x.device, dtype=x.dtype)
-                
-                y_flat = selective_scan_fn(
-                    x_reshaped.contiguous(),
-                    dt_reshaped.contiguous(),
-                    A_ssm.contiguous(),
-                    B_expanded.contiguous(),
-                    C_expanded.contiguous(),
-                    D_param.contiguous(),
-                    z=None,
-                    delta_bias=None,
-                    delta_softplus=False,  # dt already processed
-                    return_last_state=False
-                )
-                
-                # Reshape back: (B*H, L, D) -> (B, H, L, D) -> (B, L, H, D)
-                y = y_flat.reshape(batch_size, n_heads, seq_len, head_dim).permute(0, 2, 1, 3)
+                # Stack all heads: list of (B, L, head_dim) -> (B, L, n_heads, head_dim)
+                y = torch.stack(y_heads, dim=2)
                 return y
                 
             except Exception as e:
@@ -901,15 +904,13 @@ class SS2D(nn.Module):
                 # C: (B, L, N)
                 # D: (D,)
                 
-                # Check actual shape of A and ensure it's (d_inner, d_state)
-                if A.ndim == 2 and A.shape[0] == d_inner:
-                    A_use = A
-                else:
-                    # If A is from self.A_logs: (K, d_inner, d_state), select one direction
-                    # This shouldn't happen, but handle gracefully
-                    raise ValueError(f"Unexpected A shape: {A.shape}, expected ({d_inner}, {{d_state}})")
+                # A comes from -torch.exp(self.A_logs[k]) where A_logs[k] has shape (d_inner, d_state)
+                # Verify shape
+                if A.shape != (d_inner, self.d_state):
+                    raise ValueError(f"A shape mismatch: {A.shape}, expected ({d_inner}, {self.d_state})")
                 
-                d_state = A_use.shape[1]
+                A_use = A
+                d_state = self.d_state
                 
                 # Ensure delta matches x shape
                 if delta.shape != x.shape:
@@ -930,7 +931,7 @@ class SS2D(nn.Module):
                     D.contiguous(),
                     z=None,
                     delta_bias=None,
-                    delta_softplus=True,
+                    delta_softplus=False,  # Already applied softplus above
                     return_last_state=False
                 )
                 return y
