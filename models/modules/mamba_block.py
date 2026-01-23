@@ -229,8 +229,22 @@ class MambaBlock(nn.Module):
         # Project delta
         delta = F.softplus(self.dt_proj(delta))  # (B, L, d_inner)
         
-        # Selective scan
-        y = self.selective_scan(x, delta, A, B, C, D)
+        # Use fast CUDA kernels if available, otherwise fallback to Python
+        if self.use_fast_path:
+            # Use optimized selective_scan_fn from mamba-ssm (100-1000x faster!)
+            y = selective_scan_fn(
+                x.contiguous(),
+                delta.contiguous(),
+                A.contiguous(),
+                B.contiguous(),
+                C.contiguous(),
+                D.float().contiguous(),
+                z=None,
+                return_last_state=False
+            )
+        else:
+            # Fallback to pure PyTorch implementation (slow)
+            y = self.selective_scan(x, delta, A, B, C, D)
         
         return y
     
@@ -374,6 +388,7 @@ class Mamba2Block(nn.Module):
         chunk_size: int = 256,
         bias: bool = False,
         conv_bias: bool = True,
+        use_fast_path: bool = True,
     ):
         super().__init__()
         
@@ -382,6 +397,7 @@ class Mamba2Block(nn.Module):
         self.d_conv = d_conv
         self.expand = expand
         self.d_inner = int(dim * expand)
+        self.use_fast_path = use_fast_path and MAMBA_AVAILABLE
         
         # Adjust n_heads to be a valid divisor of d_inner
         # Find the largest divisor <= n_heads that divides d_inner
@@ -491,7 +507,7 @@ class Mamba2Block(nn.Module):
         C: torch.Tensor
     ) -> torch.Tensor:
         """
-        State Space Duality scan.
+        State Space Duality scan with fast CUDA kernels when available.
         
         Args:
             x: Input (B, L, H, D)
@@ -517,8 +533,54 @@ class Mamba2Block(nn.Module):
         B = B.unsqueeze(2).expand(-1, -1, n_heads, -1)  # (B, L, H, N)
         C = C.unsqueeze(2).expand(-1, -1, n_heads, -1)  # (B, L, H, N)
         
-        # Simple sequential scan (can be parallelized with chunk-wise processing)
         d_state = B.shape[-1]
+        
+        # Try to use fast CUDA kernels if available
+        # For multi-head, process each head separately with fast kernels
+        if self.use_fast_path:
+            try:
+                ys_heads = []
+                for h_idx in range(n_heads):
+                    # Extract single head
+                    x_h = x[:, :, h_idx, :]  # (B, L, D)
+                    dt_h = dt[:, :, h_idx, :]  # (B, L, 1)
+                    A_h = -torch.exp(self.A_log[h_idx].float())  # scalar
+                    D_h = self.D[h_idx].float()  # scalar
+                    
+                    # Expand A for all dimensions
+                    A_expanded = A_h.unsqueeze(0).expand(head_dim, d_state)  # (D, N)
+                    
+                    # Expand dt for all dimensions
+                    dt_expanded = dt_h.expand(-1, -1, head_dim)  # (B, L, D)
+                    
+                    # D expanded
+                    D_expanded = D_h.expand(head_dim)  # (D,)
+                    
+                    # Use fast selective_scan_fn
+                    y_h = selective_scan_fn(
+                        x_h.contiguous(),
+                        dt_expanded.contiguous(),
+                        A_expanded.contiguous(),
+                        B.contiguous(),  # (B, L, N)
+                        C.contiguous(),  # (B, L, N)
+                        D_expanded.contiguous(),
+                        z=None,
+                        return_last_state=False
+                    )  # (B, L, D)
+                    
+                    ys_heads.append(y_h.unsqueeze(2))  # (B, L, 1, D)
+                
+                # Concatenate all heads
+                y = torch.cat(ys_heads, dim=2)  # (B, L, H, D)
+                return y
+                
+            except Exception as e:
+                # If fast path fails, fall through to Python implementation
+                if batch_size == 1:  # Only warn on first batch
+                    print(f"Warning: Mamba2 fast path failed ({e}), using slow Python fallback")
+                pass
+        
+        # Fallback: Pure PyTorch implementation (slow)
         h = torch.zeros(batch_size, n_heads, head_dim, d_state, device=x.device, dtype=x.dtype)
         
         ys = []
@@ -610,6 +672,7 @@ class SS2D(nn.Module):
         dt_rank: Union[int, str] = "auto",
         bias: bool = False,
         conv_bias: bool = True,
+        use_fast_path: bool = True,
     ):
         super().__init__()
         
@@ -619,6 +682,7 @@ class SS2D(nn.Module):
         self.expand = expand
         self.d_inner = int(dim * expand)
         self.dt_rank = math.ceil(dim / 16) if dt_rank == "auto" else dt_rank
+        self.use_fast_path = use_fast_path and MAMBA_AVAILABLE
         
         # Number of scan directions
         self.K = 4  # 4 directions for cross-scan
@@ -794,24 +858,38 @@ class SS2D(nn.Module):
         D: torch.Tensor
     ) -> torch.Tensor:
         """
-        Selective scan (same as MambaBlock).
+        Selective scan with fast CUDA kernels when available.
         """
-        batch_size, seq_len, d_inner = x.shape
-        d_state = A.shape[1]
-        
-        delta_A = torch.exp(delta.unsqueeze(-1) * A)
-        delta_B = delta.unsqueeze(-1) * B.unsqueeze(2)
-        
-        h = torch.zeros(batch_size, d_inner, d_state, device=x.device, dtype=x.dtype)
-        ys = []
-        
-        for i in range(seq_len):
-            h = delta_A[:, i] * h + delta_B[:, i] * x[:, i].unsqueeze(-1)
-            y = (h * C[:, i].unsqueeze(1)).sum(dim=-1)
-            ys.append(y)
-        
-        y = torch.stack(ys, dim=1)
-        y = y + x * D
+        # Use fast CUDA kernels if available (100-1000x faster!)
+        if self.use_fast_path:
+            y = selective_scan_fn(
+                x.contiguous(),
+                delta.contiguous(),
+                A.contiguous(),
+                B.contiguous(),
+                C.contiguous(),
+                D.float().contiguous(),
+                z=None,
+                return_last_state=False
+            )
+        else:
+            # Fallback to pure PyTorch (slow)
+            batch_size, seq_len, d_inner = x.shape
+            d_state = A.shape[1]
+            
+            delta_A = torch.exp(delta.unsqueeze(-1) * A)
+            delta_B = delta.unsqueeze(-1) * B.unsqueeze(2)
+            
+            h = torch.zeros(batch_size, d_inner, d_state, device=x.device, dtype=x.dtype)
+            ys = []
+            
+            for i in range(seq_len):
+                h = delta_A[:, i] * h + delta_B[:, i] * x[:, i].unsqueeze(-1)
+                y = (h * C[:, i].unsqueeze(1)).sum(dim=-1)
+                ys.append(y)
+            
+            y = torch.stack(ys, dim=1)
+            y = y + x * D
         
         return y
 

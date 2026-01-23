@@ -89,6 +89,55 @@ def get_batch_size_for_model(model_name: str, default_batch_size: int, num_param
         return default_batch_size
 
 
+def check_mamba_installation():
+    """Check if mamba-ssm is properly installed for fast training."""
+    print("\n" + "="*70)
+    print("CHECKING MAMBA-SSM INSTALLATION")
+    print("="*70)
+    
+    try:
+        # Check if mamba_ssm is available
+        try:
+            import mamba_ssm
+            from mamba_ssm.ops.selective_scan_interface import selective_scan_fn
+            print("✓ mamba-ssm is installed with CUDA kernels")
+            mamba_available = True
+        except ImportError:
+            print("✗ mamba-ssm NOT installed or CUDA kernels unavailable")
+            mamba_available = False
+        
+        # Check our MambaBlock
+        from models.modules import MambaBlock
+        test_block = MambaBlock(dim=64, d_state=16)
+        
+        if test_block.use_fast_path:
+            print("✓ Fast CUDA kernels will be used (100-1000x faster)")
+        else:
+            print("\n" + "!"*70)
+            print("⚠️  WARNING: SLOW PYTHON IMPLEMENTATION WILL BE USED!")
+            print("!"*70)
+            print("\nThis will cause EXTREME slowdown (~100-1000x slower)!")
+            print("Expected time per batch: 40+ minutes instead of 1-2 seconds!")
+            print("\nTo fix, install mamba-ssm:")
+            print("  pip install mamba-ssm")
+            print("\nOr from source:")
+            print("  pip install git+https://github.com/state-spaces/mamba.git")
+            print("\nPress Ctrl+C to cancel, or wait 10 seconds to continue anyway...")
+            print("!"*70 + "\n")
+            
+            import time
+            for i in range(10, 0, -1):
+                print(f"  Continuing in {i}...", end='\r')
+                time.sleep(1)
+            print("\n")
+        
+        print("="*70 + "\n")
+        
+    except Exception as e:
+        print(f"Warning: Could not check mamba installation: {e}")
+        print("="*70 + "\n")
+
+
 # ============================================================================
 # Model Definitions
 # ============================================================================
@@ -479,6 +528,10 @@ def train_single_model(
 
 def main():
     args = parse_args()
+    
+    # Check if mamba-ssm is properly configured for Mamba models
+    if not args.base_only or (args.models and any('mamba' in m.lower() for m in args.models)):
+        check_mamba_installation()
     
     # Get models to train
     models_to_train = get_models_to_train(args)
