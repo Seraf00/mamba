@@ -580,11 +580,11 @@ class Mamba2Block(nn.Module):
                 for h in range(n_heads):
                     # Extract data for this head
                     x_h = x[:, :, h, :]  # (B, L, head_dim)
-                    dt_h = dt[:, :, h].unsqueeze(-1).expand(-1, -1, head_dim)  # (B, L, head_dim)
+                    dt_h = dt[:, :, h].unsqueeze(-1).repeat(1, 1, head_dim)  # (B, L, head_dim)
                     
                     # Create A matrix for this head: (head_dim, d_state)
-                    # Each row has the same A value replicated across the state dimension
-                    A_h = A[h].view(1, 1).expand(head_dim, d_state)  # (head_dim, d_state)
+                    # Each row has the same A value - use repeat to actually copy the data
+                    A_h = A[h].view(1, 1).repeat(head_dim, d_state)  # (head_dim, d_state)
                     
                     # D parameter for skip connection (no skip for now)
                     D_param = torch.zeros(head_dim, device=x.device, dtype=x.dtype)
@@ -914,7 +914,7 @@ class SS2D(nn.Module):
                 
                 # Ensure delta matches x shape
                 if delta.shape != x.shape:
-                    delta = delta.expand_as(x)
+                    delta = delta.repeat(1, 1, d_inner // delta.shape[-1]) if delta.shape[-1] < d_inner else delta
                 
                 # Ensure B and C have correct shape (B, L, N)
                 if B.shape != (batch_size, seq_len, d_state):
