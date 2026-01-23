@@ -565,38 +565,44 @@ class Mamba2Block(nn.Module):
         if self.use_fast_path:
             try:
                 # Process each head separately with selective_scan_fn
-                # Reshape: (B, L, H, D) -> (B*H, L, D)
-                x_flat = x.reshape(batch_size * n_heads, seq_len, head_dim)
+                # selective_scan_fn expects A: (D, N) where D matches the last dim of u
+                # When we process (B*H, L, D), D=head_dim, so A should be (head_dim, d_state)
                 
-                # dt: (B, L, H) -> (B*H, L, 1) -> broadcast to (B*H, L, D)
-                dt_flat = dt.reshape(batch_size * n_heads, seq_len, 1).expand(-1, -1, head_dim)
+                # Prepare A: (H,) -> replicate for each feature dimension within a head
+                # A is per-head, so we need one A matrix per head: (head_dim, d_state)
+                # But A is scalar per head, so expand it properly
+                A_expanded = A.view(n_heads, 1, 1).expand(-1, 1, d_state)  # (H, 1, N)
+                A_ssm = A_expanded.expand(-1, head_dim, -1).reshape(n_heads * head_dim, d_state)  # (H*D, N)
                 
-                # A: (H,) -> expand to (H*D, N) for selective_scan_fn
-                # We need to replicate A for each head dimension
-                A_ssm = A.view(n_heads, 1, 1).expand(-1, head_dim, d_state).reshape(n_heads * head_dim, d_state)
+                # Process all heads together by treating (B, H) as a combined batch dimension
+                # Reshape: (B, L, H, D) -> (B, H, L, D) -> (B*H, L, D)
+                x_reshaped = x.permute(0, 2, 1, 3).reshape(batch_size * n_heads, seq_len, head_dim)
                 
-                # B, C: (B, L, N) -> repeat for heads (B*H, L, N)
-                B_flat = B.unsqueeze(2).expand(-1, -1, n_heads, -1).reshape(batch_size * n_heads, seq_len, d_state)
-                C_flat = C.unsqueeze(2).expand(-1, -1, n_heads, -1).reshape(batch_size * n_heads, seq_len, d_state)
+                # dt: (B, L, H) -> (B, H, L) -> (B*H, L) -> (B*H, L, 1) -> expand to (B*H, L, D)
+                dt_reshaped = dt.permute(0, 2, 1).reshape(batch_size * n_heads, seq_len, 1).expand(-1, -1, head_dim)
                 
-                # D parameter (no skip connection in SSD, use zeros)
-                D_flat = torch.zeros(n_heads * head_dim, device=x.device, dtype=x.dtype)
+                # B, C: (B, L, N) -> expand for heads -> (B, H, L, N) -> (B*H, L, N)
+                B_expanded = B.unsqueeze(1).expand(-1, n_heads, -1, -1).reshape(batch_size * n_heads, seq_len, d_state)
+                C_expanded = C.unsqueeze(1).expand(-1, n_heads, -1, -1).reshape(batch_size * n_heads, seq_len, d_state)
+                
+                # D parameter: zeros for no skip (one per feature dimension)
+                D_param = torch.zeros(head_dim, device=x.device, dtype=x.dtype)
                 
                 y_flat = selective_scan_fn(
-                    x_flat.contiguous(),
-                    dt_flat.contiguous(),
+                    x_reshaped.contiguous(),
+                    dt_reshaped.contiguous(),
                     A_ssm.contiguous(),
-                    B_flat.contiguous(),
-                    C_flat.contiguous(),
-                    D_flat.contiguous(),
+                    B_expanded.contiguous(),
+                    C_expanded.contiguous(),
+                    D_param.contiguous(),
                     z=None,
                     delta_bias=None,
                     delta_softplus=False,  # dt already processed
                     return_last_state=False
                 )
                 
-                # Reshape back: (B*H, L, D) -> (B, L, H, D)
-                y = y_flat.reshape(batch_size, seq_len, n_heads, head_dim)
+                # Reshape back: (B*H, L, D) -> (B, H, L, D) -> (B, L, H, D)
+                y = y_flat.reshape(batch_size, n_heads, seq_len, head_dim).permute(0, 2, 1, 3)
                 return y
                 
             except Exception as e:
@@ -883,7 +889,6 @@ class SS2D(nn.Module):
         Selective scan with optimized CUDA kernels.
         """
         batch_size, seq_len, d_inner = x.shape
-        d_state = A.shape[1]
         
         # Use fast CUDA kernels if available
         if self.use_fast_path:
@@ -896,18 +901,33 @@ class SS2D(nn.Module):
                 # C: (B, L, N)
                 # D: (D,)
                 
-                # A is already (d_inner, d_state) = (D, N) ✓
-                # Expand delta to match x if needed
+                # Check actual shape of A and ensure it's (d_inner, d_state)
+                if A.ndim == 2 and A.shape[0] == d_inner:
+                    A_use = A
+                else:
+                    # If A is from self.A_logs: (K, d_inner, d_state), select one direction
+                    # This shouldn't happen, but handle gracefully
+                    raise ValueError(f"Unexpected A shape: {A.shape}, expected ({d_inner}, {{d_state}})")
+                
+                d_state = A_use.shape[1]
+                
+                # Ensure delta matches x shape
                 if delta.shape != x.shape:
                     delta = delta.expand_as(x)
+                
+                # Ensure B and C have correct shape (B, L, N)
+                if B.shape != (batch_size, seq_len, d_state):
+                    raise ValueError(f"B shape mismatch: {B.shape}, expected ({batch_size}, {seq_len}, {d_state})")
+                if C.shape != (batch_size, seq_len, d_state):
+                    raise ValueError(f"C shape mismatch: {C.shape}, expected ({batch_size}, {seq_len}, {d_state})")
                 
                 y = selective_scan_fn(
                     x.contiguous(),
                     delta.contiguous(),
-                    A.contiguous(),  # (d_inner, d_state)
-                    B.contiguous(),  # (B, L, d_state)
-                    C.contiguous(),  # (B, L, d_state)
-                    D.contiguous(),  # (d_inner,)
+                    A_use.contiguous(),
+                    B.contiguous(),
+                    C.contiguous(),
+                    D.contiguous(),
                     z=None,
                     delta_bias=None,
                     delta_softplus=True,
@@ -916,6 +936,9 @@ class SS2D(nn.Module):
                 return y
             except Exception as e:
                 print(f"Warning: VMamba CUDA kernel failed ({e}), using Python fallback")
+        
+        # Fallback to pure PyTorch
+        d_state = B.shape[-1]
         
         # Fallback to pure PyTorch
         delta_A = torch.exp(delta.unsqueeze(-1) * A)
