@@ -453,10 +453,18 @@ class Mamba2Block(nn.Module):
         )
         
         # A parameter (log form for stability)
-        self.A_log = nn.Parameter(torch.zeros(n_heads))
+        # For CUDA kernel compatibility, A must be (head_dim, d_state) per head
+        # Initialize with S4D-Real initialization per feature dimension
+        A = repeat(
+            torch.arange(1, d_state + 1, dtype=torch.float32),
+            'n -> h d n',
+            h=n_heads,
+            d=self.head_dim
+        )
+        self.A_log = nn.Parameter(torch.log(A))  # (n_heads, head_dim, d_state)
         
-        # D (skip connection per head)
-        self.D = nn.Parameter(torch.ones(n_heads))
+        # D (skip connection per feature dimension per head)
+        self.D = nn.Parameter(torch.ones(n_heads, self.head_dim))
         
         # dt bias
         self.dt_bias = nn.Parameter(torch.zeros(n_heads))
@@ -547,13 +555,8 @@ class Mamba2Block(nn.Module):
         """
         batch_size, seq_len, n_heads, head_dim = x.shape
         
-        # Expand A, B, C for computation
-        # A: (H,) -> (B, L, H, 1)
-        A_expanded = A.view(1, 1, n_heads, 1).expand(batch_size, seq_len, -1, -1)
-        
-        # Discretize: A_bar = exp(dt * A)
-        dt_expanded = dt.unsqueeze(-1)  # (B, L, H, 1)
-        A_bar = torch.exp(dt_expanded * A_expanded)  # (B, L, H, 1)
+        # Get A (negative for stability) - shape: (n_heads, head_dim, d_state)
+        A = -torch.exp(self.A_log.float())
         
         # B and C: (B, L, N) - broadcast over heads
         B_expanded = B.unsqueeze(2).expand(-1, -1, n_heads, -1)  # (B, L, H, N)
@@ -566,14 +569,7 @@ class Mamba2Block(nn.Module):
             try:
                 # Process each head separately with selective_scan_fn
                 # selective_scan_fn expects A: (D, N) where D matches the last dim of u
-                # When we process (B*H, L, D), D=head_dim, so A should be (head_dim, d_state)
-                
-                # Prepare A: Since A is per-head scalar (H,), we need to create
-                # A matrix of shape (head_dim, d_state) where each row uses the same A value
-                # We'll replicate A across feature dimension
-                A_ssm = A.view(n_heads, 1, 1).expand(-1, head_dim, d_state)  # (H, D, N)
-                # For selective_scan_fn, we need (D, N) - use first head's A as they're processed separately
-                # Actually, we'll process each head separately in a loop instead
+                # Each head has A with shape (head_dim, d_state) from initialization
                 
                 # Process each head separately since each has its own A parameter
                 y_heads = []
@@ -582,12 +578,11 @@ class Mamba2Block(nn.Module):
                     x_h = x[:, :, h, :]  # (B, L, head_dim)
                     dt_h = dt[:, :, h].unsqueeze(-1).repeat(1, 1, head_dim)  # (B, L, head_dim)
                     
-                    # Create A matrix for this head: (head_dim, d_state)
-                    # Each row has the same A value - use repeat to actually copy the data
-                    A_h = A[h].view(1, 1).repeat(head_dim, d_state)  # (head_dim, d_state)
+                    # Get A matrix for this head: already (head_dim, d_state) from initialization
+                    A_h = A[h]  # (head_dim, d_state)
                     
-                    # D parameter for skip connection (no skip for now)
-                    D_param = torch.zeros(head_dim, device=x.device, dtype=x.dtype)
+                    # D parameter for skip connection
+                    D_h = self.D[h]  # (head_dim,)
                     
                     # Call selective_scan_fn for this head
                     y_h = selective_scan_fn(
@@ -596,7 +591,7 @@ class Mamba2Block(nn.Module):
                         A_h.contiguous(),
                         B.contiguous(),  # (B, L, d_state)
                         C.contiguous(),  # (B, L, d_state)
-                        D_param.contiguous(),
+                        D_h.contiguous(),
                         z=None,
                         delta_bias=None,
                         delta_softplus=False,  # dt already processed
@@ -612,20 +607,33 @@ class Mamba2Block(nn.Module):
                 print(f"Warning: Mamba2 SSD CUDA kernel failed ({e}), using Python fallback")
         
         # Fallback: Pure PyTorch implementation
+        # Discretize: A_bar = exp(dt * A)
+        # dt: (B, L, n_heads) -> (B, L, n_heads, 1, 1)
+        dt_expanded = dt.unsqueeze(-1).unsqueeze(-1)  # (B, L, n_heads, 1, 1)
+        # A: (n_heads, head_dim, d_state) -> (1, 1, n_heads, head_dim, d_state)
+        A_expanded = A.unsqueeze(0).unsqueeze(0)
+        A_bar = torch.exp(dt_expanded * A_expanded)  # (B, L, n_heads, head_dim, d_state)
+        
+        # h: (B, n_heads, head_dim, d_state)
         h = torch.zeros(batch_size, n_heads, head_dim, d_state, device=x.device, dtype=x.dtype)
         
         ys = []
         for i in range(seq_len):
             # h = A_bar * h + B * x
-            h = A_bar[:, i].unsqueeze(-1) * h + B_expanded[:, i].unsqueeze(2) * x[:, i].unsqueeze(-1)
+            # A_bar[i]: (B, n_heads, head_dim, d_state)
+            # h: (B, n_heads, head_dim, d_state)
+            # B_expanded[i]: (B, n_heads, d_state)
+            # x[i]: (B, n_heads, head_dim)
+            h = A_bar[:, i] * h + B_expanded[:, i].unsqueeze(2) * x[:, i].unsqueeze(-1)
             # y = (h * C).sum(-1)
-            y = (h * C_expanded[:, i].unsqueeze(2)).sum(dim=-1)  # (B, H, D)
+            # C_expanded[i]: (B, n_heads, d_state)
+            y = (h * C_expanded[:, i].unsqueeze(2)).sum(dim=-1)  # (B, n_heads, head_dim)
             ys.append(y)
         
-        y = torch.stack(ys, dim=1)  # (B, L, H, D)
+        y = torch.stack(ys, dim=1)  # (B, L, n_heads, head_dim)
         
-        # Add skip connection
-        y = y + x * self.D.view(1, 1, n_heads, 1)
+        # Add skip connection: D is (n_heads, head_dim)
+        y = y + x * self.D.view(1, 1, n_heads, head_dim)
         
         return y
 
