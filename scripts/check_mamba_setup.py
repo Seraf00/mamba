@@ -35,9 +35,16 @@ if MAMBA_AVAILABLE:
     print("\n2. Checking CUDA kernels...")
     try:
         from mamba_ssm.ops.selective_scan_interface import selective_scan_fn
-        print("   ✓ selective_scan_fn available (CUDA kernels)")
+        print("   ✓ selective_scan_fn available (CUDA kernels for Mamba & VMamba)")
     except ImportError as e:
-        print(f"   ✗ CUDA kernels NOT available: {e}")
+        print(f"   ✗ selective_scan_fn NOT available: {e}")
+    
+    try:
+        from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
+        print("   ✓ mamba_chunk_scan_combined available (Triton kernels for Mamba2)")
+    except ImportError as e:
+        print(f"   ✗ mamba_chunk_scan_combined NOT available: {e}")
+        print("     (Mamba2Block will use PyTorch fallback - this is normal for older mamba-ssm versions)")
     
     try:
         from mamba_ssm import Mamba, Mamba2

@@ -24,16 +24,38 @@ import torch.nn.functional as F
 from einops import rearrange, repeat
 
 # Try to import mamba_ssm, fall back to pure PyTorch implementation
+MAMBA_AVAILABLE = False
+MAMBA2_CUDA_AVAILABLE = False
+VMAMBA_CUDA_AVAILABLE = False
+
+Mamba = None  # type: ignore
+Mamba2 = None  # type: ignore
+selective_scan_fn = None  # type: ignore
+mamba_chunk_scan_combined = None  # type: ignore
+
 try:
     from mamba_ssm import Mamba, Mamba2
     from mamba_ssm.ops.selective_scan_interface import selective_scan_fn
     MAMBA_AVAILABLE = True
 except ImportError:
-    MAMBA_AVAILABLE = False
-    Mamba = None  # type: ignore
-    Mamba2 = None  # type: ignore
-    selective_scan_fn = None  # type: ignore
     print("Warning: mamba_ssm not installed. Using pure PyTorch implementation (slower).")
+
+# Try to import Mamba2's chunk scan (SSD algorithm) for CUDA acceleration
+try:
+    from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
+    MAMBA2_CUDA_AVAILABLE = True
+except ImportError:
+    mamba_chunk_scan_combined = None
+    print("Note: mamba_chunk_scan_combined not available, Mamba2 will use PyTorch fallback.")
+
+# For VMamba: the selective_scan_fn from mamba_ssm works with proper reshaping
+# The function signature is: selective_scan_fn(u, delta, A, B, C, D, z, delta_bias, delta_softplus, return_last_state)
+# Required shapes:
+#   u, delta: (B, D, L) where D = d_inner for each direction
+#   A: (D, N) 
+#   B, C: (B, G, N, L) where G is group (1 for VMamba per-direction)
+#   D: (D,)
+VMAMBA_CUDA_AVAILABLE = MAMBA_AVAILABLE and selective_scan_fn is not None
 
 
 # =============================================================================
@@ -628,10 +650,13 @@ class Mamba2Block(nn.Module):
         """
         State Space Duality scan with fast CUDA kernels when available.
         
+        Uses mamba_chunk_scan_combined for CUDA acceleration (the proper Mamba2 kernel).
+        Falls back to pure PyTorch implementation if CUDA kernels are unavailable.
+        
         Args:
             x: Input (B, L, H, D)
             dt: Time step (B, L, H)
-            A: State matrix (H,)
+            A: State matrix (passed but we use self.A_log)
             B: Input projection (B, L, N)
             C: Output projection (B, L, N)
             
@@ -639,7 +664,52 @@ class Mamba2Block(nn.Module):
             Output (B, L, H, D)
         """
         batch_size, seq_len, n_heads, head_dim = x.shape
+        d_state = B.shape[-1]
         
+        # Try CUDA-accelerated mamba_chunk_scan_combined
+        # This is the proper kernel for Mamba2's SSD algorithm
+        if MAMBA2_CUDA_AVAILABLE and mamba_chunk_scan_combined is not None:
+            try:
+                # mamba_chunk_scan_combined expects:
+                #   x: (batch, seqlen, nheads, headdim)
+                #   dt: (batch, seqlen, nheads)
+                #   A: (nheads,) - 1D tensor
+                #   B: (batch, seqlen, ngroups, dstate)
+                #   C: (batch, seqlen, ngroups, dstate)
+                #   D: (nheads, headdim) or (nheads,)
+                
+                # Get A as 1D (nheads,) - just use first element per head
+                # A_log is (n_heads, head_dim, d_state), we need (n_heads,)
+                A_1d = -torch.exp(self.A_log[:, 0, 0].float())  # (n_heads,)
+                
+                # B and C are (B, L, N), need (B, L, ngroups=1, N)
+                B_reshaped = B.unsqueeze(2)  # (B, L, 1, N)
+                C_reshaped = C.unsqueeze(2)  # (B, L, 1, N)
+                
+                # D is (n_heads, head_dim)
+                D = self.D.float()
+                
+                # Call the CUDA kernel
+                y = mamba_chunk_scan_combined(
+                    x.contiguous(),
+                    dt.contiguous(),
+                    A_1d.contiguous(),
+                    B_reshaped.contiguous(),
+                    C_reshaped.contiguous(),
+                    chunk_size=self.chunk_size,
+                    D=D.contiguous(),
+                    z=None,
+                    dt_bias=self.dt_bias.float().contiguous(),
+                    dt_softplus=False,  # We already applied softplus
+                )
+                return y
+            except Exception as e:
+                # Fall back to PyTorch on any error
+                if not hasattr(self, '_cuda_warning_shown'):
+                    print(f"Warning: mamba_chunk_scan_combined failed ({e}), using PyTorch fallback")
+                    self._cuda_warning_shown = True
+        
+        # Pure PyTorch fallback implementation
         # Get A (negative for stability) - shape: (n_heads, head_dim, d_state)
         A = -torch.exp(self.A_log.float())
         
@@ -647,51 +717,6 @@ class Mamba2Block(nn.Module):
         B_expanded = B.unsqueeze(2).expand(-1, -1, n_heads, -1)  # (B, L, H, N)
         C_expanded = C.unsqueeze(2).expand(-1, -1, n_heads, -1)  # (B, L, H, N)
         
-        d_state = B.shape[-1]
-        
-        # Use fast CUDA kernels if available
-        if self.use_fast_path and selective_scan_fn is not None:
-            try:
-                # Process each head separately with selective_scan_fn
-                # selective_scan_fn expects A: (D, N) where D matches the last dim of u
-                # Each head has A with shape (head_dim, d_state) from initialization
-                
-                # Process each head separately since each has its own A parameter
-                y_heads = []
-                for h in range(n_heads):
-                    # Extract data for this head
-                    x_h = x[:, :, h, :]  # (B, L, head_dim)
-                    dt_h = dt[:, :, h].unsqueeze(-1).repeat(1, 1, head_dim)  # (B, L, head_dim)
-                    
-                    # Get A matrix for this head: already (head_dim, d_state) from initialization
-                    A_h = A[h]  # (head_dim, d_state)
-                    
-                    # D parameter for skip connection
-                    D_h = self.D[h]  # (head_dim,)
-                    
-                    # Call selective_scan_fn for this head
-                    y_h = selective_scan_fn(  # type: ignore  # type: ignore
-                        x_h.contiguous(),
-                        dt_h.contiguous(),
-                        A_h.contiguous(),
-                        B.contiguous(),  # (B, L, d_state)
-                        C.contiguous(),  # (B, L, d_state)
-                        D_h.contiguous(),
-                        z=None,
-                        delta_bias=None,
-                        delta_softplus=False,  # dt already processed
-                        return_last_state=False
-                    )
-                    y_heads.append(y_h)
-                
-                # Stack all heads: list of (B, L, head_dim) -> (B, L, n_heads, head_dim)
-                y = torch.stack(y_heads, dim=2)
-                return y
-                
-            except Exception as e:
-                print(f"Warning: Mamba2 SSD CUDA kernel failed ({e}), using Python fallback")
-        
-        # Fallback: Pure PyTorch implementation
         # Discretize: A_bar = exp(dt * A)
         # dt: (B, L, n_heads) -> (B, L, n_heads, 1, 1)
         dt_expanded = dt.unsqueeze(-1).unsqueeze(-1)  # (B, L, n_heads, 1, 1)
@@ -705,13 +730,8 @@ class Mamba2Block(nn.Module):
         ys = []
         for i in range(seq_len):
             # h = A_bar * h + B * x
-            # A_bar[i]: (B, n_heads, head_dim, d_state)
-            # h: (B, n_heads, head_dim, d_state)
-            # B_expanded[i]: (B, n_heads, d_state)
-            # x[i]: (B, n_heads, head_dim)
             h = A_bar[:, i] * h + B_expanded[:, i].unsqueeze(2) * x[:, i].unsqueeze(-1)
             # y = (h * C).sum(-1)
-            # C_expanded[i]: (B, n_heads, d_state)
             y = (h * C_expanded[:, i].unsqueeze(2)).sum(dim=-1)  # (B, n_heads, head_dim)
             ys.append(y)
         
@@ -983,54 +1003,70 @@ class SS2D(nn.Module):
         D: torch.Tensor
     ) -> torch.Tensor:
         """
-        Selective scan with optimized CUDA kernels.
+        Selective scan for VMamba with CUDA acceleration when available.
+        
+        Uses selective_scan_fn from mamba_ssm for CUDA acceleration.
+        The function expects specific tensor shapes from VMamba's implementation:
+          - u (input): (B, D, L) 
+          - delta: (B, D, L)
+          - A: (D, N) 
+          - B: (B, G, N, L) where G is groups (1 for per-direction scan)
+          - C: (B, G, N, L)
+          - D: (D,)
+        
+        Args:
+            x: Input (B, L, D)
+            delta: Time step (B, L, D)
+            A: State matrix (D, N)
+            B: Input projection (B, L, N)
+            C: Output projection (B, L, N)
+            D: Skip connection (D,)
+            
+        Returns:
+            Output (B, L, D)
         """
         batch_size, seq_len, d_inner = x.shape
-        
-        # Use fast CUDA kernels if available
-        if self.use_fast_path and selective_scan_fn is not None:
-            try:
-                # selective_scan_fn expects:
-                # u: (B, L, D)
-                # delta: (B, L, D) 
-                # A: (D, N) where D is d_inner, N is d_state
-                # B: (B, L, N)
-                # C: (B, L, N)
-                # D: (D,)
-                
-                d_state = self.d_state
-                
-                # Validate shapes before calling CUDA kernel
-                if A.shape != (d_inner, d_state):
-                    raise ValueError(f"A shape mismatch: {A.shape}, expected ({d_inner}, {d_state})")
-                if B.shape != (batch_size, seq_len, d_state):
-                    raise ValueError(f"B shape mismatch: {B.shape}, expected ({batch_size}, {seq_len}, {d_state})")
-                if C.shape != (batch_size, seq_len, d_state):
-                    raise ValueError(f"C shape mismatch: {C.shape}, expected ({batch_size}, {seq_len}, {d_state})")
-                if delta.shape != x.shape:
-                    raise ValueError(f"delta shape mismatch: {delta.shape}, expected {x.shape}")
-                
-                y = selective_scan_fn(
-                    x.contiguous(),
-                    delta.contiguous(),
-                    A.contiguous(),
-                    B.contiguous(),
-                    C.contiguous(),
-                    D.contiguous(),
-                    z=None,
-                    delta_bias=None,
-                    delta_softplus=False,  # Already applied softplus above
-                    return_last_state=False
-                )
-                assert y is not None, "selective_scan_fn returned None"
-                return y
-            except Exception as e:
-                print(f"Warning: VMamba CUDA kernel failed ({e}), using PyTorch fallback")
-        
-        # Fallback to pure PyTorch
         d_state = B.shape[-1]
         
-        # Fallback to pure PyTorch
+        # Try CUDA-accelerated selective_scan_fn
+        if VMAMBA_CUDA_AVAILABLE and selective_scan_fn is not None:
+            try:
+                # Reshape tensors to match selective_scan_fn expectations (VMamba style)
+                # u: (B, L, D) -> (B, D, L)
+                u = rearrange(x, 'b l d -> b d l').contiguous()
+                # delta: (B, L, D) -> (B, D, L)
+                delta_t = rearrange(delta, 'b l d -> b d l').contiguous()
+                # A is already (D, N)
+                A_t = A.contiguous()
+                # B: (B, L, N) -> (B, 1, N, L) - add group dimension
+                B_t = rearrange(B, 'b l n -> b 1 n l').contiguous()
+                # C: (B, L, N) -> (B, 1, N, L)
+                C_t = rearrange(C, 'b l n -> b 1 n l').contiguous()
+                # D is already (D,)
+                D_t = D.contiguous()
+                
+                # Call selective_scan_fn
+                # Returns: (B, D, L)
+                y = selective_scan_fn(
+                    u, delta_t, A_t, B_t, C_t, D_t,
+                    z=None,
+                    delta_bias=None,
+                    delta_softplus=False,  # We already applied softplus
+                    return_last_state=False
+                )
+                
+                # Reshape back: (B, D, L) -> (B, L, D)
+                y = rearrange(y, 'b d l -> b l d')
+                return y
+                
+            except Exception as e:
+                # Fall back to PyTorch on any error
+                if not hasattr(self, '_cuda_warning_shown'):
+                    print(f"Warning: selective_scan_fn failed ({e}), using PyTorch fallback")
+                    self._cuda_warning_shown = True
+        
+        # Pure PyTorch fallback implementation
+        # Discretize A and B
         delta_A = torch.exp(delta.unsqueeze(-1) * A)
         delta_B = delta.unsqueeze(-1) * B.unsqueeze(2)
         
