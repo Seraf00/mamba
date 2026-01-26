@@ -187,9 +187,9 @@ def parse_args():
     parser.add_argument('--mamba_only', action='store_true',
                         help='Train only Mamba-enhanced models')
     parser.add_argument('--mamba_variants', nargs='+', type=str, 
-                        default=['vmamba'],
+                        default=['mamba'],
                         choices=MAMBA_VARIANTS,
-                        help='Mamba variants to test for Mamba models')
+                        help='Mamba variants to test for Mamba models (default: mamba only - fully optimized)')
     parser.add_argument('--resume_from', type=str, default=None,
                         help='Resume training from this model (skip models before it)')
     
