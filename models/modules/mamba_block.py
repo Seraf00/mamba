@@ -26,6 +26,9 @@ try:
     MAMBA_AVAILABLE = True
 except ImportError:
     MAMBA_AVAILABLE = False
+    Mamba = None  # type: ignore
+    Mamba2 = None  # type: ignore
+    selective_scan_fn = None  # type: ignore
     print("Warning: mamba_ssm not installed. Using pure PyTorch implementation (slower).")
 
 
@@ -119,18 +122,17 @@ class MambaBlock(nn.Module):
         self.d_conv = d_conv
         self.expand = expand
         self.d_inner = int(dim * expand)
-        self.dt_rank = math.ceil(dim / 16) if dt_rank == "auto" else dt_rank
-        self.use_fast_path = use_fast_path and MAMBA_AVAILABLE
+        self.dt_rank = int(math.ceil(dim / 16) if dt_rank == "auto" else dt_rank)
+        self.use_fast_path = use_fast_path and MAMBA_AVAILABLE and selective_scan_fn is not None and Mamba is not None
         
         # If we can use the native Mamba implementation, do so
         if self.use_fast_path:
             try:
-                self.mamba_native = Mamba(
+                self.mamba_native = Mamba(  # type: ignore
                     d_model=dim,
                     d_state=d_state,
                     d_conv=d_conv,
                     expand=expand,
-                    dt_rank=dt_rank,
                     dt_min=dt_min,
                     dt_max=dt_max,
                     dt_init=dt_init,
@@ -155,6 +157,9 @@ class MambaBlock(nn.Module):
     def _init_manual_components(self, dim, d_state, d_conv, expand, dt_rank,
                                 dt_min, dt_max, dt_init_floor, bias, conv_bias):
         """Initialize components for manual (non-native) implementation."""
+        # Ensure dt_rank is an int
+        dt_rank = int(dt_rank) if isinstance(dt_rank, (int, float)) else math.ceil(dim / 16)
+        
         # Input projection
         self.in_proj = nn.Linear(dim, self.d_inner * 2, bias=bias)
         
@@ -170,10 +175,10 @@ class MambaBlock(nn.Module):
         
         # SSM parameters
         # x_proj: project x to (delta, B, C)
-        self.x_proj = nn.Linear(self.d_inner, self.dt_rank + d_state * 2, bias=False)
+        self.x_proj = nn.Linear(self.d_inner, dt_rank + d_state * 2, bias=False)
         
         # dt_proj: project delta from dt_rank to d_inner
-        self.dt_proj = nn.Linear(self.dt_rank, self.d_inner, bias=True)
+        self.dt_proj = nn.Linear(dt_rank, self.d_inner, bias=True)
         
         # Initialize dt bias
         dt = torch.exp(
@@ -181,7 +186,7 @@ class MambaBlock(nn.Module):
         ).clamp(min=dt_init_floor)
         inv_dt = dt + torch.log(-torch.expm1(-dt))
         with torch.no_grad():
-            self.dt_proj.bias.copy_(inv_dt)
+            self.dt_proj.bias.data.copy_(inv_dt)
         
         # S4D real initialization for A
         A = repeat(
@@ -207,13 +212,14 @@ class MambaBlock(nn.Module):
         """
         # Handle 2D input (images)
         is_2d = x.ndim == 4
+        H, W = 0, 0  # Initialize to avoid unbound variable warnings
         if is_2d:
             B, C, H, W = x.shape
             x = rearrange(x, 'b c h w -> b (h w) c')
         
         # If using native Mamba implementation, use it directly
         if self._use_native:
-            output = self.mamba_native(x)
+            output = self.mamba_native(x)  # type: ignore
         else:
             # Manual implementation
             batch_size, seq_len, _ = x.shape
@@ -364,6 +370,7 @@ class MambaLayer(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Handle 2D input
         is_2d = x.ndim == 4
+        H, W = 0, 0  # Initialize to avoid unbound variable warnings
         if is_2d:
             B, C, H, W = x.shape
             x = rearrange(x, 'b c h w -> b (h w) c')
@@ -423,10 +430,34 @@ class Mamba2Block(nn.Module):
         self.d_conv = d_conv
         self.expand = expand
         self.d_inner = int(dim * expand)
-        self.use_fast_path = use_fast_path and MAMBA_AVAILABLE
+        self.use_fast_path = use_fast_path and MAMBA_AVAILABLE and Mamba2 is not None
         
+        # Try to use native Mamba2 implementation if available
+        if self.use_fast_path:
+            try:
+                mamba2_kwargs = {
+                    'd_model': dim,
+                    'd_state': d_state,
+                    'd_conv': d_conv,
+                    'expand': expand,
+                    'chunk_size': chunk_size,
+                    'bias': bias,
+                    'conv_bias': conv_bias,
+                }
+                if head_dim is not None:
+                    mamba2_kwargs['headdim'] = head_dim
+                
+                self.mamba2_native = Mamba2(**mamba2_kwargs)  # type: ignore
+                self._use_native = True
+                return  # Skip manual initialization
+            except Exception as e:
+                print(f"Warning: Could not load native Mamba2 ({e}), using manual implementation")
+                self._use_native = False
+        else:
+            self._use_native = False
+        
+        # Manual implementation below
         # Adjust n_heads to be a valid divisor of d_inner
-        # Find the largest divisor <= n_heads that divides d_inner
         original_n_heads = n_heads
         while n_heads > 1 and self.d_inner % n_heads != 0:
             n_heads -= 1
@@ -484,9 +515,17 @@ class Mamba2Block(nn.Module):
             Output of same shape
         """
         is_2d = x.ndim == 4
+        H, W = 0, 0  # Initialize to avoid unbound variable warnings
         if is_2d:
             B, C, H, W = x.shape
             x = rearrange(x, 'b c h w -> b (h w) c')
+        
+        # Use native Mamba2 if available
+        if hasattr(self, '_use_native') and self._use_native:
+            output = self.mamba2_native(x)  # type: ignore
+            if is_2d:
+                output = rearrange(output, 'b (h w) c -> b c h w', h=H, w=W)
+            return output
         
         batch_size, seq_len, _ = x.shape
         
@@ -565,7 +604,7 @@ class Mamba2Block(nn.Module):
         d_state = B.shape[-1]
         
         # Use fast CUDA kernels if available
-        if self.use_fast_path:
+        if self.use_fast_path and selective_scan_fn is not None:
             try:
                 # Process each head separately with selective_scan_fn
                 # selective_scan_fn expects A: (D, N) where D matches the last dim of u
@@ -585,7 +624,7 @@ class Mamba2Block(nn.Module):
                     D_h = self.D[h]  # (head_dim,)
                     
                     # Call selective_scan_fn for this head
-                    y_h = selective_scan_fn(
+                    y_h = selective_scan_fn(  # type: ignore  # type: ignore
                         x_h.contiguous(),
                         dt_h.contiguous(),
                         A_h.contiguous(),
@@ -668,6 +707,7 @@ class Mamba2Layer(nn.Module):
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         is_2d = x.ndim == 4
+        H, W = 0, 0  # Initialize to avoid unbound variable warnings
         if is_2d:
             B, C, H, W = x.shape
             x = rearrange(x, 'b c h w -> b (h w) c')
@@ -720,7 +760,7 @@ class SS2D(nn.Module):
         self.d_conv = d_conv
         self.expand = expand
         self.d_inner = int(dim * expand)
-        self.dt_rank = math.ceil(dim / 16) if dt_rank == "auto" else dt_rank
+        self.dt_rank = int(math.ceil(dim / 16) if dt_rank == "auto" else dt_rank)
         self.use_fast_path = use_fast_path and MAMBA_AVAILABLE
         
         # Number of scan directions
@@ -758,7 +798,7 @@ class SS2D(nn.Module):
             ).clamp(min=1e-4)
             inv_dt = dt + torch.log(-torch.expm1(-dt))
             with torch.no_grad():
-                dt_proj.bias.copy_(inv_dt)
+                dt_proj.bias.data.copy_(inv_dt)  # type: ignore[misc]
         
         # A and D for each direction
         A = repeat(
@@ -902,7 +942,7 @@ class SS2D(nn.Module):
         batch_size, seq_len, d_inner = x.shape
         
         # Use fast CUDA kernels if available
-        if self.use_fast_path:
+        if self.use_fast_path and selective_scan_fn is not None:
             try:
                 # selective_scan_fn expects:
                 # u: (B, L, D)
@@ -912,28 +952,22 @@ class SS2D(nn.Module):
                 # C: (B, L, N)
                 # D: (D,)
                 
-                # A comes from -torch.exp(self.A_logs[k]) where A_logs[k] has shape (d_inner, d_state)
-                # Verify shape
-                if A.shape != (d_inner, self.d_state):
-                    raise ValueError(f"A shape mismatch: {A.shape}, expected ({d_inner}, {self.d_state})")
-                
-                A_use = A
                 d_state = self.d_state
                 
-                # Ensure delta matches x shape
-                if delta.shape != x.shape:
-                    delta = delta.repeat(1, 1, d_inner // delta.shape[-1]) if delta.shape[-1] < d_inner else delta
-                
-                # Ensure B and C have correct shape (B, L, N)
+                # Validate shapes before calling CUDA kernel
+                if A.shape != (d_inner, d_state):
+                    raise ValueError(f"A shape mismatch: {A.shape}, expected ({d_inner}, {d_state})")
                 if B.shape != (batch_size, seq_len, d_state):
                     raise ValueError(f"B shape mismatch: {B.shape}, expected ({batch_size}, {seq_len}, {d_state})")
                 if C.shape != (batch_size, seq_len, d_state):
                     raise ValueError(f"C shape mismatch: {C.shape}, expected ({batch_size}, {seq_len}, {d_state})")
+                if delta.shape != x.shape:
+                    raise ValueError(f"delta shape mismatch: {delta.shape}, expected {x.shape}")
                 
                 y = selective_scan_fn(
                     x.contiguous(),
                     delta.contiguous(),
-                    A_use.contiguous(),
+                    A.contiguous(),
                     B.contiguous(),
                     C.contiguous(),
                     D.contiguous(),
@@ -942,9 +976,10 @@ class SS2D(nn.Module):
                     delta_softplus=False,  # Already applied softplus above
                     return_last_state=False
                 )
+                assert y is not None, "selective_scan_fn returned None"
                 return y
             except Exception as e:
-                print(f"Warning: VMamba CUDA kernel failed ({e}), using Python fallback")
+                print(f"Warning: VMamba CUDA kernel failed ({e}), using PyTorch fallback")
         
         # Fallback to pure PyTorch
         d_state = B.shape[-1]
