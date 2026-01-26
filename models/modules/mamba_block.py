@@ -499,22 +499,18 @@ class Mamba2Block(nn.Module):
                     conv_bias=conv_bias,
                 )
                 self._use_native = True
-                return  # Skip manual initialization
+                # DON'T return early - always initialize manual components as fallback
             except Exception as e:
                 print(f"Warning: Could not load native Mamba2 ({e}), using manual implementation")
                 self._use_native = False
         else:
             self._use_native = False
         
-        # Manual implementation below
-        
-        self.n_heads = n_heads
-        self.head_dim = head_dim or (self.d_inner // n_heads)
-        self.chunk_size = chunk_size
+        # Always initialize manual implementation components (for fallback or primary use)
         
         # Input projection: x -> (z, x, B, C, dt)
         # dt should have n_heads elements to match dt_bias
-        d_in_proj = self.d_inner + self.d_inner + d_state + d_state + n_heads
+        d_in_proj = self.d_inner + self.d_inner + d_state + d_state + self.n_heads
         self.in_proj = nn.Linear(dim, d_in_proj, bias=bias)
         
         # Depthwise convolution on x
@@ -533,16 +529,16 @@ class Mamba2Block(nn.Module):
         A = repeat(
             torch.arange(1, d_state + 1, dtype=torch.float32),
             'n -> h d n',
-            h=n_heads,
+            h=self.n_heads,
             d=self.head_dim
         )
         self.A_log = nn.Parameter(torch.log(A))  # (n_heads, head_dim, d_state)
         
         # D (skip connection per feature dimension per head)
-        self.D = nn.Parameter(torch.ones(n_heads, self.head_dim))
+        self.D = nn.Parameter(torch.ones(self.n_heads, self.head_dim))
         
         # dt bias
-        self.dt_bias = nn.Parameter(torch.zeros(n_heads))
+        self.dt_bias = nn.Parameter(torch.zeros(self.n_heads))
         
         # Output norm and projection
         self.norm = RMSNorm(self.d_inner)
