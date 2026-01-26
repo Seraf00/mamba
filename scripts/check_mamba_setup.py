@@ -3,6 +3,10 @@
 Check if mamba-ssm is properly installed and being used.
 """
 
+import os
+# Disable Triton autotuning to avoid map::at errors in Mamba2
+os.environ.setdefault('TRITON_DISABLE_AUTOTUNE', '1')
+
 import sys
 import torch
 from pathlib import Path
@@ -97,25 +101,28 @@ if MAMBA_AVAILABLE:
         print(f"     32x32 image: {elapsed*1000:.2f}ms")
         print(f"     Estimated 256x256: {elapsed * 64:.2f}s")
         
-        # Test Mamba2Block (multi-head)
-        print("\n   Testing Mamba2Block (8 heads):")
-        mamba2 = Mamba2Block(dim=64, d_state=16, n_heads=8).to(device)
+        # Test Mamba2Block (auto-computed heads for optimal headdim)
+        # Use dim=128 for better Mamba2 compatibility (d_inner=256, headdim=64, n_heads=4)
+        print("\n   Testing Mamba2Block (auto n_heads, dim=128):")
+        x_test_m2 = torch.randn(1, 128, 32, 32).to(device)
+        mamba2 = Mamba2Block(dim=128, d_state=64).to(device)  # n_heads auto-computed
+        print(f"     Config: dim=128, d_inner={mamba2.d_inner}, heads={mamba2.n_heads}, headdim={mamba2.head_dim}")
+        print(f"     Using native: {getattr(mamba2, '_use_native', False)}")
         
         with torch.no_grad():
-            _ = mamba2(x_test)
+            _ = mamba2(x_test_m2)
         
         if device == 'cuda':
             torch.cuda.synchronize()
         start = time.time()
         with torch.no_grad():
-            _ = mamba2(x_test)
+            _ = mamba2(x_test_m2)
         if device == 'cuda':
             torch.cuda.synchronize()
         elapsed_m2 = time.time() - start
         
         print(f"     32x32 image: {elapsed_m2*1000:.2f}ms")
         print(f"     Estimated 256x256: {elapsed_m2 * 64:.2f}s")
-        print(f"     Note: Mamba2 with 8 heads processes each head separately")
         
         # Test VMMambaBlock (4-direction scan)
         print("\n   Testing VMMambaBlock (4-direction scan):")

@@ -10,6 +10,10 @@ Each block is designed to be a drop-in replacement for transformer
 or convolutional blocks in segmentation architectures.
 """
 
+import os
+# Disable Triton autotuning to avoid map::at errors in Mamba2
+os.environ.setdefault('TRITON_DISABLE_AUTOTUNE', '1')
+
 import math
 from typing import Optional, Tuple, Union
 from functools import partial
@@ -219,7 +223,29 @@ class MambaBlock(nn.Module):
         
         # If using native Mamba implementation, use it directly
         if self._use_native:
-            output = self.mamba_native(x)  # type: ignore
+            try:
+                output = self.mamba_native(x)  # type: ignore
+            except (RuntimeError, IndexError, KeyError) as e:
+                # Triton kernel compilation can fail, fall back to manual implementation
+                print(f"Warning: Native Mamba failed ({type(e).__name__}: {e}), falling back to manual implementation")
+                self._use_native = False
+                # Re-initialize manual components if needed
+                if not hasattr(self, 'in_proj'):
+                    self._init_manual_components(
+                        self.dim, self.d_state, self.d_conv, self.expand,
+                        self.dt_rank, 0.001, 0.1, 1e-4, False, True
+                    )
+                # Fall through to manual implementation
+                batch_size, seq_len, _ = x.shape
+                xz = self.in_proj(x)
+                x, z = xz.chunk(2, dim=-1)
+                x = rearrange(x, 'b l d -> b d l')
+                x = self.conv1d(x)[:, :, :seq_len]
+                x = rearrange(x, 'b d l -> b l d')
+                x = F.silu(x)
+                y = self.ssm(x)
+                y = y * F.silu(z)
+                output = self.out_proj(y)
         else:
             # Manual implementation
             batch_size, seq_len, _ = x.shape
@@ -416,7 +442,7 @@ class Mamba2Block(nn.Module):
         d_state: int = 64,
         d_conv: int = 4,
         expand: int = 2,
-        n_heads: int = 8,
+        n_heads: Optional[int] = None,  # Auto-compute if None
         head_dim: Optional[int] = None,
         chunk_size: int = 256,
         bias: bool = False,
@@ -432,22 +458,46 @@ class Mamba2Block(nn.Module):
         self.d_inner = int(dim * expand)
         self.use_fast_path = use_fast_path and MAMBA_AVAILABLE and Mamba2 is not None
         
+        # Auto-compute optimal n_heads for headdim=64 (Mamba2 preferred)
+        # Mamba2 works best with headdim of 64 or 128
+        if n_heads is None:
+            # Target headdim of 64, fall back to 128 if needed
+            n_heads = max(1, self.d_inner // 64)
+            if self.d_inner % n_heads != 0:
+                n_heads = max(1, self.d_inner // 128)
+        
+        # Ensure d_inner is divisible by n_heads
+        while self.d_inner % n_heads != 0 and n_heads > 1:
+            n_heads -= 1
+        
+        # Compute headdim
+        computed_headdim = self.d_inner // n_heads
+        
+        # If head_dim was explicitly provided, try to use it
+        if head_dim is not None:
+            # Recalculate n_heads to match requested head_dim
+            n_heads = max(1, self.d_inner // head_dim)
+            while self.d_inner % n_heads != 0 and n_heads > 1:
+                n_heads -= 1
+            computed_headdim = self.d_inner // n_heads
+        
+        self.n_heads = n_heads
+        self.head_dim = computed_headdim
+        self.chunk_size = chunk_size
+        
         # Try to use native Mamba2 implementation if available
         if self.use_fast_path:
             try:
-                mamba2_kwargs = {
-                    'd_model': dim,
-                    'd_state': d_state,
-                    'd_conv': d_conv,
-                    'expand': expand,
-                    'chunk_size': chunk_size,
-                    'bias': bias,
-                    'conv_bias': conv_bias,
-                }
-                if head_dim is not None:
-                    mamba2_kwargs['headdim'] = head_dim
-                
-                self.mamba2_native = Mamba2(**mamba2_kwargs)  # type: ignore
+                self.mamba2_native = Mamba2(  # type: ignore
+                    d_model=dim,
+                    d_state=d_state,
+                    d_conv=d_conv,
+                    expand=expand,
+                    headdim=self.head_dim,  # Explicitly set headdim
+                    chunk_size=chunk_size,
+                    bias=bias,
+                    conv_bias=conv_bias,
+                )
                 self._use_native = True
                 return  # Skip manual initialization
             except Exception as e:
@@ -457,12 +507,6 @@ class Mamba2Block(nn.Module):
             self._use_native = False
         
         # Manual implementation below
-        # Adjust n_heads to be a valid divisor of d_inner
-        original_n_heads = n_heads
-        while n_heads > 1 and self.d_inner % n_heads != 0:
-            n_heads -= 1
-        if self.d_inner % n_heads != 0:
-            n_heads = 1  # Fallback to single head
         
         self.n_heads = n_heads
         self.head_dim = head_dim or (self.d_inner // n_heads)
@@ -522,10 +566,16 @@ class Mamba2Block(nn.Module):
         
         # Use native Mamba2 if available
         if hasattr(self, '_use_native') and self._use_native:
-            output = self.mamba2_native(x)  # type: ignore
-            if is_2d:
-                output = rearrange(output, 'b (h w) c -> b c h w', h=H, w=W)
-            return output
+            try:
+                output = self.mamba2_native(x)  # type: ignore
+                if is_2d:
+                    output = rearrange(output, 'b (h w) c -> b c h w', h=H, w=W)
+                return output
+            except (RuntimeError, IndexError, KeyError) as e:
+                # Triton kernel compilation can fail, fall back to manual implementation
+                print(f"Warning: Native Mamba2 failed ({type(e).__name__}: {e}), falling back to manual implementation")
+                self._use_native = False
+                # Continue to manual implementation below
         
         batch_size, seq_len, _ = x.shape
         
