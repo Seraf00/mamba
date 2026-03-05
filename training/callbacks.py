@@ -118,14 +118,12 @@ class ModelCheckpoint:
         return score < self.best_score
     
     def _save(self, trainer, filename: str):
-        """Save model."""
+        """Save model. Only saves model weights + metadata (no optimizer state)."""
         path = self.save_dir / filename
         torch.save({
             'epoch': trainer.current_epoch,
             'model_state_dict': trainer.model.state_dict(),
-            'optimizer_state_dict': trainer.optimizer.state_dict(),
             'best_score': self.best_score,
-            'history': trainer.history
         }, path)
 
 

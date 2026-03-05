@@ -559,7 +559,13 @@ def train_single_model(
     # Save individual results
     with open(model_dir / 'results.json', 'w') as f:
         json.dump(results, f, indent=2)
-    
+
+    # Clean up TensorBoard logs to save disk space (CSV log is enough)
+    import shutil
+    tb_log_dir = model_dir / 'logs'
+    if tb_log_dir.exists():
+        shutil.rmtree(tb_log_dir)
+
     # Aggressively clean up GPU memory
     # Delete all objects that may hold GPU references
     del model
@@ -568,10 +574,10 @@ def train_single_model(
     del val_loader
     del train_dataset
     del val_dataset
-    
+
     # Force garbage collection and clear CUDA cache
     cleanup_gpu_memory()
-    
+
     print(f"  Memory cleaned. GPU memory after cleanup: "
           f"{torch.cuda.memory_allocated() / 1024**2:.1f}MB allocated, "
           f"{torch.cuda.memory_reserved() / 1024**2:.1f}MB reserved" if torch.cuda.is_available() else "")
