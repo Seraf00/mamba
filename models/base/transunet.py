@@ -133,28 +133,36 @@ class VisionTransformer(nn.Module):
         ])
         
         self.norm = nn.LayerNorm(embed_dim)
-    
+        self.gradient_checkpointing = False
+
+    def enable_gradient_checkpointing(self):
+        """Enable gradient checkpointing to reduce memory at cost of ~20% speed."""
+        self.gradient_checkpointing = True
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
             x: Input (B, H*W, C)
-            
+
         Returns:
             Output (B, H*W, embed_dim)
         """
         # Project to embedding dimension
         x = self.proj(x)
-        
+
         # Add positional encoding
         x = self.pos_encoding(x)
         x = self.pos_drop(x)
-        
+
         # Transformer layers
         for layer in self.layers:
-            x = layer(x)
-        
+            if self.gradient_checkpointing and self.training:
+                x = torch.utils.checkpoint.checkpoint(layer, x, use_reentrant=False)
+            else:
+                x = layer(x)
+
         x = self.norm(x)
-        
+
         return x
 
 

@@ -51,6 +51,9 @@ class TrainingConfig:
     device: str = 'cuda'
     num_workers: int = 4
 
+    # Gradient accumulation
+    gradient_accumulation_steps: int = 1
+
 
 class Trainer:
     """
@@ -253,19 +256,18 @@ class Trainer:
         return self.history
     
     def _train_epoch(self) -> float:
-        """Train for one epoch."""
+        """Train for one epoch with optional gradient accumulation."""
         self.model.train()
         total_loss = 0.0
         num_batches = 0
-        
+        accum_steps = self.config.gradient_accumulation_steps
+
         pbar = tqdm(self.train_loader, desc=f"Epoch {self.current_epoch + 1}")
-        
+
         for batch_idx, (images, masks) in enumerate(pbar):
             images = images.to(self.device)
             masks = masks.to(self.device)
-            
-            self.optimizer.zero_grad()
-            
+
             # Forward pass with mixed precision
             if self.config.use_amp and self.scaler is not None:
                 with torch.amp.autocast('cuda'):
@@ -273,25 +275,35 @@ class Trainer:
                     if isinstance(outputs, dict):
                         outputs = outputs['out']
                     loss = self.criterion(outputs, masks)
-                
+                    if accum_steps > 1:
+                        loss = loss / accum_steps
+
                 self.scaler.scale(loss).backward()
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
+
+                if (batch_idx + 1) % accum_steps == 0 or (batch_idx + 1) == len(self.train_loader):
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                    self.optimizer.zero_grad()
             else:
                 outputs = self.model(images)
                 if isinstance(outputs, dict):
                     outputs = outputs['out']
                 loss = self.criterion(outputs, masks)
-                
+                if accum_steps > 1:
+                    loss = loss / accum_steps
+
                 loss.backward()
-                self.optimizer.step()
-            
-            total_loss += loss.item()
+
+                if (batch_idx + 1) % accum_steps == 0 or (batch_idx + 1) == len(self.train_loader):
+                    self.optimizer.step()
+                    self.optimizer.zero_grad()
+
+            total_loss += loss.item() * (accum_steps if accum_steps > 1 else 1)
             num_batches += 1
-            
+
             # Update progress bar
-            pbar.set_postfix({'loss': f'{loss.item():.4f}'})
-        
+            pbar.set_postfix({'loss': f'{loss.item() * (accum_steps if accum_steps > 1 else 1):.4f}'})
+
         return total_loss / num_batches
     
     def _validate(self) -> tuple:

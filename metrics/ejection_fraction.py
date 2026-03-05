@@ -184,20 +184,27 @@ class VolumeCalculator:
 class BiplaneSimpson:
     """
     Biplane Simpson's method using 2CH and 4CH views.
-    
+
     More accurate volume estimation using two orthogonal views.
     V = π/4 * h * Σ (a_i * b_i)
     where a_i and b_i are diameters from 2CH and 4CH views.
+
+    Args:
+        pixel_spacing_2ch: Pixel spacing (height, width) in mm for 2CH view.
+        pixel_spacing_4ch: Pixel spacing (height, width) in mm for 4CH view.
+        n_disks: Number of disks for Simpson's method.
     """
-    
+
     def __init__(
         self,
-        pixel_spacing: Tuple[float, float] = (1.0, 1.0),
+        pixel_spacing_2ch: Tuple[float, float] = (1.0, 1.0),
+        pixel_spacing_4ch: Tuple[float, float] = (1.0, 1.0),
         n_disks: int = 20
     ):
-        self.pixel_spacing = pixel_spacing
+        self.pixel_spacing_2ch = pixel_spacing_2ch
+        self.pixel_spacing_4ch = pixel_spacing_4ch
         self.n_disks = n_disks
-    
+
     def calculate(
         self,
         seg_2ch: torch.Tensor,
@@ -206,99 +213,100 @@ class BiplaneSimpson:
     ) -> VolumeResult:
         """
         Calculate volume using biplane method.
-        
+
         Args:
             seg_2ch: 2-chamber view segmentation
             seg_4ch: 4-chamber view segmentation
             lv_class: LV endocardium class
-            
+
         Returns:
             Volume result
         """
         mask_2ch = (seg_2ch == lv_class).float().cpu().numpy()
         mask_4ch = (seg_4ch == lv_class).float().cpu().numpy()
-        
+
         if mask_2ch.ndim == 3:
             mask_2ch = mask_2ch[0]
         if mask_4ch.ndim == 3:
             mask_4ch = mask_4ch[0]
-        
-        # Get LV lengths
-        length_2ch = self._get_length(mask_2ch)
-        length_4ch = self._get_length(mask_4ch)
-        
+
+        # Get LV lengths using per-view spacing
+        length_2ch = self._get_length(mask_2ch, self.pixel_spacing_2ch[0])
+        length_4ch = self._get_length(mask_4ch, self.pixel_spacing_4ch[0])
+
         # Use average length
         length_mm = (length_2ch + length_4ch) / 2
-        
+
         if length_mm == 0:
             return VolumeResult(0, 0, 0, 'biplane_simpson')
-        
+
         disk_height = length_mm / self.n_disks
-        
-        # Get diameters from each view
-        diameters_2ch = self._get_diameters(mask_2ch, self.n_disks)
-        diameters_4ch = self._get_diameters(mask_4ch, self.n_disks)
-        
-        # Calculate volume
+
+        # Get diameters from each view using per-view spacing
+        diameters_2ch = self._get_diameters(mask_2ch, self.n_disks, self.pixel_spacing_2ch)
+        diameters_4ch = self._get_diameters(mask_4ch, self.n_disks, self.pixel_spacing_4ch)
+
+        # Calculate volume: V = π/4 * h * Σ(a_i * b_i)
         volume = 0.0
         for a, b in zip(diameters_2ch, diameters_4ch):
             disk_volume = (np.pi / 4) * a * b * disk_height
             volume += disk_volume
-        
+
         volume_ml = volume / 1000
-        
-        # Calculate total area
-        area_2ch = mask_2ch.sum() * self.pixel_spacing[0] * self.pixel_spacing[1]
-        area_4ch = mask_4ch.sum() * self.pixel_spacing[0] * self.pixel_spacing[1]
+
+        # Calculate total area using per-view spacing
+        area_2ch = mask_2ch.sum() * self.pixel_spacing_2ch[0] * self.pixel_spacing_2ch[1]
+        area_4ch = mask_4ch.sum() * self.pixel_spacing_4ch[0] * self.pixel_spacing_4ch[1]
         avg_area = (area_2ch + area_4ch) / 2
-        
+
         return VolumeResult(
             volume_ml=volume_ml,
             area_mm2=avg_area,
             length_mm=length_mm,
             method='biplane_simpson'
         )
-    
-    def _get_length(self, mask: np.ndarray) -> float:
+
+    def _get_length(self, mask: np.ndarray, height_spacing: float) -> float:
         """Get LV length in mm."""
         rows = mask.any(axis=1)
         if not rows.any():
             return 0.0
         row_indices = np.where(rows)[0]
         length_px = row_indices.max() - row_indices.min() + 1
-        return length_px * self.pixel_spacing[0]
-    
+        return length_px * height_spacing
+
     def _get_diameters(
         self,
         mask: np.ndarray,
-        n_disks: int
+        n_disks: int,
+        pixel_spacing: Tuple[float, float] = (1.0, 1.0)
     ) -> List[float]:
         """Get diameters at n_disk positions."""
         rows = mask.any(axis=1)
         if not rows.any():
             return [0.0] * n_disks
-        
+
         row_indices = np.where(rows)[0]
         start_row = row_indices.min()
         end_row = row_indices.max()
-        
+
         disk_height = (end_row - start_row) / n_disks
         diameters = []
-        
+
         for i in range(n_disks):
             row_idx = int(start_row + (i + 0.5) * disk_height)
             row_idx = min(row_idx, mask.shape[0] - 1)
-            
+
             row_mask = mask[row_idx, :]
             if row_mask.any():
                 cols = np.where(row_mask)[0]
                 diameter_px = cols.max() - cols.min() + 1
-                diameter_mm = diameter_px * self.pixel_spacing[1]
+                diameter_mm = diameter_px * pixel_spacing[1]
             else:
                 diameter_mm = 0.0
-            
+
             diameters.append(diameter_mm)
-        
+
         return diameters
 
 
@@ -324,10 +332,15 @@ class EjectionFractionCalculator:
     def __init__(
         self,
         pixel_spacing: Tuple[float, float] = (1.0, 1.0),
-        method: str = 'simpson'
+        method: str = 'simpson',
+        pixel_spacing_2ch: Optional[Tuple[float, float]] = None,
+        pixel_spacing_4ch: Optional[Tuple[float, float]] = None
     ):
         self.volume_calculator = VolumeCalculator(pixel_spacing, method)
-        self.biplane = BiplaneSimpson(pixel_spacing)
+        self.biplane = BiplaneSimpson(
+            pixel_spacing_2ch=pixel_spacing_2ch or pixel_spacing,
+            pixel_spacing_4ch=pixel_spacing_4ch or pixel_spacing,
+        )
     
     def calculate(
         self,

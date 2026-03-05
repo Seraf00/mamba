@@ -23,7 +23,7 @@ import argparse
 import sys
 import json
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -35,8 +35,9 @@ from tqdm import tqdm
 from scipy import stats
 
 from data import CAMUSDataset, get_transforms
+from data.camus_dataset import CAMUSPatient
 from models import get_model
-from metrics import SegmentationMetrics, EjectionFractionCalculator
+from metrics import SegmentationMetrics, EjectionFractionCalculator, CAMUSEFCalculator, compute_ejection_fraction
 from utils import set_seed, get_device
 
 
@@ -203,6 +204,11 @@ def evaluate_model(
     per_sample_dice = compute_per_sample_dice(all_preds, all_targets)
     results['per_sample_dice'] = per_sample_dice.tolist()
     results['dice_std'] = float(np.std(per_sample_dice))
+
+    # Bootstrap 95% confidence interval
+    mean_dice, ci_lower, ci_upper = bootstrap_confidence_interval(per_sample_dice)
+    results['dice_ci_lower'] = ci_lower
+    results['dice_ci_upper'] = ci_upper
     
     # Clean up
     del model
@@ -234,6 +240,133 @@ def compute_per_sample_dice(preds: np.ndarray, targets: np.ndarray) -> np.ndarra
         dice_scores.append(np.mean(class_dices))
     
     return np.array(dice_scores)
+
+
+def evaluate_ef_biplane(
+    model: torch.nn.Module,
+    data_dir: str,
+    split: str,
+    device: torch.device,
+    img_size: int = 256,
+) -> Dict[str, Any]:
+    """
+    Evaluate Ejection Fraction using biplane Simpson's method.
+
+    Groups predictions by patient across 2CH/4CH views and ED/ES phases,
+    then computes biplane EF and compares against ground truth.
+
+    Returns:
+        Dictionary with EF metrics (MAE, RMSE, correlation, Bland-Altman).
+    """
+    # Create dataset with all info
+    transform = get_transforms(split='val', img_size=(img_size, img_size))
+    dataset = CAMUSDataset(
+        root_dir=data_dir,
+        split=split,
+        views=['2CH', '4CH'],
+        phases=['ED', 'ES'],
+        transform=transform,
+        include_info=True,
+    )
+
+    # Group samples by patient
+    patient_samples: Dict[str, Dict] = {}
+    for idx in range(len(dataset)):
+        sample = dataset[idx]
+        pid = sample['patient_id']
+        view = sample['view']
+        phase = sample['phase']
+
+        if pid not in patient_samples:
+            patient_samples[pid] = {}
+
+        key = f"{view}_{phase}"
+        patient_samples[pid][key] = {
+            'image': sample['image'],
+            'mask': sample['mask'],
+            'pixel_spacing': sample['pixel_spacing'],
+            'ef_gt': sample['ef'],
+        }
+
+    # Compute EF for patients that have all 4 required masks
+    ef_calculator = CAMUSEFCalculator(lv_label=1)
+    skipped = 0
+
+    model.eval()
+    with torch.no_grad():
+        for pid, samples in tqdm(patient_samples.items(), desc="Computing biplane EF"):
+            required_keys = ['2CH_ED', '2CH_ES', '4CH_ED', '4CH_ES']
+            if not all(k in samples for k in required_keys):
+                skipped += 1
+                continue
+
+            # Get predictions for each view/phase
+            preds = {}
+            for key in required_keys:
+                img = samples[key]['image'].unsqueeze(0).to(device)
+                output = model(img)
+                if isinstance(output, dict):
+                    output = output['out']
+                preds[key] = output.argmax(dim=1).squeeze(0).cpu().numpy()
+
+            # Get per-view pixel spacing
+            spacing_2ch = samples['2CH_ED']['pixel_spacing']
+            spacing_4ch = samples['4CH_ED']['pixel_spacing']
+
+            # Get ground truth EF (use 4CH as reference, fallback to 2CH)
+            ef_gt = samples['4CH_ED']['ef_gt']
+            if ef_gt <= 0:
+                ef_gt = samples['2CH_ED']['ef_gt']
+            ef_gt = ef_gt if ef_gt > 0 else None
+
+            ef_calculator.compute_ef(
+                a2c_ed=preds['2CH_ED'],
+                a2c_es=preds['2CH_ES'],
+                a2c_spacing=spacing_2ch,
+                a4c_ed=preds['4CH_ED'],
+                a4c_es=preds['4CH_ES'],
+                a4c_spacing=spacing_4ch,
+                ef_ground_truth=ef_gt,
+                patient_id=pid,
+            )
+
+    stats = ef_calculator.compute_statistics()
+    if skipped > 0:
+        stats['patients_skipped'] = skipped
+        stats['patients_evaluated'] = len(patient_samples) - skipped
+
+    return stats
+
+
+def bootstrap_confidence_interval(
+    scores: np.ndarray,
+    n_bootstrap: int = 1000,
+    ci: float = 0.95,
+    seed: int = 42,
+) -> Tuple[float, float, float]:
+    """
+    Compute bootstrap confidence interval for a metric.
+
+    Args:
+        scores: Array of per-sample scores.
+        n_bootstrap: Number of bootstrap iterations.
+        ci: Confidence level (default: 0.95 for 95% CI).
+        seed: Random seed for reproducibility.
+
+    Returns:
+        Tuple of (mean, lower_bound, upper_bound).
+    """
+    rng = np.random.RandomState(seed)
+    boot_means = np.empty(n_bootstrap)
+    n = len(scores)
+    for i in range(n_bootstrap):
+        sample = rng.choice(scores, size=n, replace=True)
+        boot_means[i] = np.mean(sample)
+
+    alpha = (1 - ci) / 2
+    lower = float(np.percentile(boot_means, alpha * 100))
+    upper = float(np.percentile(boot_means, (1 - alpha) * 100))
+    return float(np.mean(scores)), lower, upper
 
 
 def statistical_comparison(results: Dict[str, Dict]) -> Dict[str, Any]:
@@ -391,14 +524,50 @@ def main():
                 per_class=args.per_class,
                 compute_ef=args.compute_ef
             )
-            
+
             # Add training info
             if 'training_results' in model_config:
                 results['params_M'] = model_config['training_results'].get('num_params', 0) / 1e6
                 results['inference_time_ms'] = model_config['training_results'].get('inference_time_ms')
-            
+
+            # Biplane EF evaluation
+            if args.compute_ef:
+                print(f"  Computing biplane EF...")
+                try:
+                    # Reload model for EF eval (need fresh instance)
+                    model_kwargs = {'in_channels': 1, 'num_classes': 4}
+                    if model_config['mamba_type']:
+                        model_kwargs['mamba_type'] = model_config['mamba_type']
+                    ef_model = get_model(model_config['name'], **model_kwargs)
+                    checkpoint = torch.load(model_config['checkpoint'], map_location=device, weights_only=False)
+                    if 'model_state_dict' in checkpoint:
+                        ef_model.load_state_dict(checkpoint['model_state_dict'])
+                    elif 'state_dict' in checkpoint:
+                        ef_model.load_state_dict(checkpoint['state_dict'])
+                    else:
+                        ef_model.load_state_dict(checkpoint)
+                    ef_model = ef_model.to(device)
+
+                    ef_results = evaluate_ef_biplane(
+                        ef_model, args.data_dir, args.split, device, img_size
+                    )
+                    results['ef_metrics'] = ef_results
+
+                    if 'ef_mae' in ef_results:
+                        print(f"  EF MAE: {ef_results['ef_mae']:.2f}%")
+                    if 'ef_correlation' in ef_results:
+                        print(f"  EF Correlation: {ef_results['ef_correlation']:.4f}")
+                    if 'bland_altman_bias' in ef_results:
+                        print(f"  EF Bias: {ef_results['bland_altman_bias']:.2f}%")
+
+                    del ef_model
+                    torch.cuda.empty_cache()
+                except Exception as ef_err:
+                    print(f"  EF evaluation error: {ef_err}")
+                    results['ef_metrics'] = {'error': str(ef_err)}
+
             all_results[display_name] = results
-            
+
             # Print results
             print(f"\n  Mean Dice: {results.get('mean_dice', results.get('dice', 0)):.4f} ± {results.get('dice_std', 0):.4f}")
             if 'dice_per_class' in results:
@@ -407,7 +576,7 @@ def main():
                 print(f"  Mean IoU: {results['iou']:.4f}")
             if 'hd95' in results:
                 print(f"  HD95: {results['hd95']:.2f}")
-            
+
         except Exception as e:
             print(f"  Error: {e}")
             import traceback

@@ -9,6 +9,57 @@ import numpy as np
 from typing import Dict, Optional, Tuple
 
 
+# CAMUS dataset normalization constants.
+# Images are already min-max normalized to [0, 1] in CAMUSDataset.__getitem__,
+# so mean=0.5 / std=0.5 centers the data roughly around 0 with range [-1, 1].
+# These are adequate defaults. For precise stats, run compute_dataset_statistics().
+CAMUS_MEAN = 0.5
+CAMUS_STD = 0.5
+
+
+def compute_dataset_statistics(
+    root_dir: str,
+    split: str = 'train',
+    max_samples: int = 500,
+) -> tuple:
+    """
+    Compute actual mean and std from CAMUS training images.
+
+    Note: Since images are min-max normalized to [0, 1] per-image in
+    CAMUSDataset.__getitem__, these statistics reflect the distribution
+    AFTER per-image normalization. The result is typically close to
+    mean=0.3-0.4, std=0.2-0.3 for ultrasound.
+
+    Args:
+        root_dir: Path to CAMUS dataset root.
+        split: Dataset split.
+        max_samples: Max number of samples for computation.
+
+    Returns:
+        Tuple of (mean, std).
+    """
+    from data.camus_dataset import CAMUSDataset
+
+    dataset = CAMUSDataset(root_dir=root_dir, split=split, transform=None)
+    pixel_sum = 0.0
+    pixel_sq_sum = 0.0
+    count = 0
+
+    n = min(len(dataset), max_samples)
+    for i in range(n):
+        img, _ = dataset[i]
+        if hasattr(img, 'numpy'):
+            img = img.numpy()
+        img = img.astype(np.float64)
+        pixel_sum += img.sum()
+        pixel_sq_sum += (img ** 2).sum()
+        count += img.size
+
+    mean = pixel_sum / count
+    std = np.sqrt(pixel_sq_sum / count - mean ** 2)
+    return float(mean), float(std)
+
+
 def get_train_transforms(
     img_size: Tuple[int, int] = (256, 256),
     mean: float = 0.5,

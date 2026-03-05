@@ -60,6 +60,9 @@ def parse_args():
                         help='Dice loss weight')
     parser.add_argument('--ce_weight', type=float, default=1.0,
                         help='Cross entropy loss weight')
+    parser.add_argument('--class_weights', type=str, default=None,
+                        help='Class weights: "auto_camus" for recommended CAMUS weights, '
+                             'or comma-separated values like "0.2,1.5,1.0,3.0"')
     
     # Checkpointing
     parser.add_argument('--save_dir', type=str, default='./checkpoints',
@@ -151,10 +154,22 @@ def main():
     print(f"Mamba type: {args.mamba_type}")
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
     
+    # Parse class weights
+    class_weights = None
+    if args.class_weights:
+        if args.class_weights == 'auto_camus':
+            from training.losses import CAMUS_CLASS_WEIGHTS
+            class_weights = torch.tensor(CAMUS_CLASS_WEIGHTS)
+            print(f"Using CAMUS class weights: {CAMUS_CLASS_WEIGHTS}")
+        else:
+            class_weights = torch.tensor([float(w) for w in args.class_weights.split(',')])
+            print(f"Using class weights: {class_weights.tolist()}")
+
     # Loss function
     criterion = CombinedLoss(
         dice_weight=args.dice_weight,
-        ce_weight=args.ce_weight
+        ce_weight=args.ce_weight,
+        class_weights=class_weights,
     )
     
     # Training config

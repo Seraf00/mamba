@@ -11,6 +11,8 @@ Features:
 - Global context via image-level features
 """
 
+import copy
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -274,7 +276,12 @@ class DeepLabV3(nn.Module):
         self._init_head_weights()
     
     def _make_dilated(self, layer: nn.Module, dilation: int) -> nn.Module:
-        """Convert layer to use dilated convolutions."""
+        """Convert layer to use dilated convolutions.
+
+        Deep copies the layer first to avoid modifying the original ResNet
+        in-place (which could cause issues if the backbone is reused).
+        """
+        layer = copy.deepcopy(layer)
         for name, module in layer.named_modules():
             if isinstance(module, nn.Conv2d):
                 if module.kernel_size == (3, 3):

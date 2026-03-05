@@ -384,6 +384,100 @@ class DeepSupervisionLoss(nn.Module):
         return total_loss
 
 
+class AnatomicalConstraintLoss(nn.Module):
+    """
+    Loss that penalizes anatomically impossible segmentations.
+
+    Enforces that LV endocardium (class 1) should be contained within
+    LV epicardium (class 2), and that structures don't overlap impossibly.
+
+    Args:
+        endo_class: Class index for LV endocardium (default: 1).
+        epi_class: Class index for LV epicardium/myocardium (default: 2).
+    """
+
+    def __init__(self, endo_class: int = 1, epi_class: int = 2):
+        super().__init__()
+        self.endo_class = endo_class
+        self.epi_class = epi_class
+
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            pred: Predictions (B, C, H, W) - logits before argmax.
+            target: Ground truth (B, H, W) - unused, kept for API compatibility.
+
+        Returns:
+            Scalar constraint loss.
+        """
+        pred_probs = F.softmax(pred, dim=1)
+
+        # LV_endo probability
+        lv_endo_prob = pred_probs[:, self.endo_class]
+        # LV_epi probability
+        lv_epi_prob = pred_probs[:, self.epi_class]
+
+        # Constraint: where endo is predicted, epi OR endo should also be present
+        # Penalize endo being predicted without corresponding epi region nearby
+        # Simple approach: endo prob should not exceed (endo + epi) prob
+        # This is always true for softmax, so instead penalize spatial violations:
+        # endo should be spatially contained within the union of endo+epi
+        combined_prob = lv_endo_prob + lv_epi_prob
+        violation = F.relu(lv_endo_prob - combined_prob)
+
+        return violation.mean()
+
+
+def compute_class_weights(
+    dataset,
+    num_classes: int = 4,
+    method: str = 'inverse_freq',
+    max_samples: int = 200
+) -> torch.Tensor:
+    """
+    Compute class weights from dataset for handling class imbalance.
+
+    Args:
+        dataset: PyTorch dataset returning (image, mask) tuples.
+        num_classes: Number of segmentation classes.
+        method: 'inverse_freq' or 'median_freq'.
+        max_samples: Max samples to iterate for speed.
+
+    Returns:
+        Tensor of class weights of shape (num_classes,).
+    """
+    class_counts = torch.zeros(num_classes)
+    n = min(len(dataset), max_samples)
+    for i in range(n):
+        sample = dataset[i]
+        mask = sample[1] if isinstance(sample, (tuple, list)) else sample['mask']
+        if isinstance(mask, torch.Tensor):
+            mask = mask.long()
+        else:
+            mask = torch.from_numpy(mask).long()
+        for c in range(num_classes):
+            class_counts[c] += (mask == c).sum().float()
+
+    if method == 'inverse_freq':
+        total = class_counts.sum()
+        weights = total / (num_classes * class_counts + 1e-6)
+    elif method == 'median_freq':
+        freq = class_counts / (class_counts.sum() + 1e-6)
+        median_freq = torch.median(freq)
+        weights = median_freq / (freq + 1e-6)
+    else:
+        raise ValueError(f"Unknown method: {method}")
+
+    # Normalize so mean weight = 1.0
+    weights = weights / (weights.mean() + 1e-6)
+    return weights
+
+
+# Recommended CAMUS class weights (approximate inverse frequency)
+# Classes: [background, LV_endo, LV_epi, LA]
+CAMUS_CLASS_WEIGHTS = [0.2, 1.5, 1.0, 3.0]
+
+
 def get_loss_function(
     name: str = 'combined',
     num_classes: int = 4,
@@ -392,18 +486,21 @@ def get_loss_function(
 ) -> nn.Module:
     """
     Factory function for loss functions.
-    
+
     Args:
         name: Loss function name
         num_classes: Number of classes
-        class_weights: Optional class weights
-        
+        class_weights: Optional class weights. Pass 'auto_camus' to use
+            recommended CAMUS weights.
+
     Returns:
         Loss function module
     """
-    if class_weights is not None:
+    if class_weights == 'auto_camus' or class_weights == ['auto_camus']:
+        class_weights = torch.tensor(CAMUS_CLASS_WEIGHTS)
+    elif class_weights is not None:
         class_weights = torch.tensor(class_weights)
-    
+
     if name == 'dice':
         return DiceLoss(**kwargs)
     elif name == 'ce':

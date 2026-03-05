@@ -102,6 +102,36 @@ class CAMUSPatient:
         ed_vol = self.info.get(view, {}).get('LVedv', None)
         es_vol = self.info.get(view, {}).get('LVesv', None)
         return ed_vol, es_vol
+
+    def get_pixel_spacing(self, view: str, phase: str = 'ED') -> Tuple[float, float]:
+        """
+        Get pixel spacing from NIfTI header for a specific view/phase.
+
+        Args:
+            view: '2CH' or '4CH'
+            phase: 'ED' or 'ES'
+
+        Returns:
+            Tuple of (height_spacing, width_spacing) in mm.
+            Falls back to (1.0, 1.0) if spacing cannot be determined.
+        """
+        for ext in ['.nii.gz', '.nii']:
+            filepath = self.patient_dir / f'{self.patient_id}_{view}_{phase}{ext}'
+            if filepath.exists():
+                try:
+                    img = nib.load(str(filepath))
+                    zooms = img.header.get_zooms()
+                    if len(zooms) >= 2 and zooms[0] > 0 and zooms[1] > 0:
+                        return (float(zooms[0]), float(zooms[1]))
+                except Exception as e:
+                    warnings.warn(f"Could not read spacing from {filepath}: {e}")
+
+        # Fallback
+        warnings.warn(
+            f"Could not determine pixel spacing for {self.patient_id}/{view}/{phase}. "
+            f"Using default (1.0, 1.0). Volume calculations may be inaccurate."
+        )
+        return (1.0, 1.0)
     
     def load_image(self, view: str, phase: str) -> np.ndarray:
         """
@@ -485,6 +515,10 @@ class CAMUSDataset(Dataset):
         # Return tuple (image, mask) for training compatibility
         # Use include_info=True to get full dictionary with metadata
         if self.include_info:
+            # Get pixel spacing from NIfTI header
+            actual_phase = phase if not sample_info['is_sequence'] else 'ED'
+            pixel_spacing = patient.get_pixel_spacing(view, actual_phase)
+
             output = {
                 'image': image,
                 'mask': mask,
@@ -493,6 +527,7 @@ class CAMUSDataset(Dataset):
                 'phase': phase,
                 'ef': patient.get_ef(view) or -1.0,
                 'quality': patient.get_image_quality(view) or 'Unknown',
+                'pixel_spacing': pixel_spacing,
             }
             ed_vol, es_vol = patient.get_lv_volumes(view)
             output['lv_ed_volume'] = ed_vol or -1.0
@@ -583,5 +618,6 @@ class CAMUSEFDataset(Dataset):
             'es_mask': es_sample['mask'],
             'ef_gt': patient.get_ef(view) or -1.0,
             'patient_id': pair_info['patient_id'],
-            'view': view
+            'view': view,
+            'pixel_spacing': ed_sample.get('pixel_spacing', patient.get_pixel_spacing(view, 'ED')),
         }

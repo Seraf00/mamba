@@ -329,65 +329,110 @@ class SwinTransformerBlock(nn.Module):
         x = x.view(B, H, W, -1)
         return x
     
+    def _compute_attn_mask(self, Hp: int, Wp: int, device: torch.device) -> Optional[torch.Tensor]:
+        """
+        Compute attention mask for shifted windows (SW-MSA).
+
+        Creates a mask that prevents attention across window boundaries
+        after cyclic shift. The mask assigns different region IDs to the
+        9 sub-regions created by the shift, then blocks cross-region attention
+        with -100.0 values.
+
+        Args:
+            Hp, Wp: Padded spatial dimensions.
+            device: Device to create the mask on.
+
+        Returns:
+            Attention mask of shape (nW, window_size*window_size, window_size*window_size)
+            or None if shift_size == 0.
+        """
+        if self.shift_size == 0:
+            return None
+
+        img_mask = torch.zeros((1, Hp, Wp, 1), device=device)
+        h_slices = (
+            slice(0, -self.window_size),
+            slice(-self.window_size, -self.shift_size),
+            slice(-self.shift_size, None),
+        )
+        w_slices = (
+            slice(0, -self.window_size),
+            slice(-self.window_size, -self.shift_size),
+            slice(-self.shift_size, None),
+        )
+
+        cnt = 0
+        for h in h_slices:
+            for w in w_slices:
+                img_mask[:, h, w, :] = cnt
+                cnt += 1
+
+        mask_windows = self._window_partition(img_mask, self.window_size)
+        mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
+        attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
+        attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0))
+        attn_mask = attn_mask.masked_fill(attn_mask == 0, float(0.0))
+
+        return attn_mask
+
     def forward(self, x: torch.Tensor, H: int, W: int) -> torch.Tensor:
         """
         Args:
             x: Input (B, H*W, C)
             H, W: Spatial dimensions
-            
+
         Returns:
             Output (B, H*W, C)
         """
         B, L, C = x.shape
         assert L == H * W
-        
+
         shortcut = x
         x = self.norm1(x)
         x = x.view(B, H, W, C)
-        
+
         # Pad for window partition
         pad_h = (self.window_size - H % self.window_size) % self.window_size
         pad_w = (self.window_size - W % self.window_size) % self.window_size
         if pad_h > 0 or pad_w > 0:
             x = F.pad(x, (0, 0, 0, pad_w, 0, pad_h))
-        
+
         Hp, Wp = x.shape[1], x.shape[2]
-        
-        # Cyclic shift
+
+        # Cyclic shift + attention mask
         if self.shift_size > 0:
             x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
-            # Create attention mask (simplified - could be more efficient)
-            attn_mask = None
+            attn_mask = self._compute_attn_mask(Hp, Wp, x.device)
         else:
             attn_mask = None
-        
+
         # Window partition
         x_windows = self._window_partition(x, self.window_size)
         x_windows = x_windows.view(-1, self.window_size * self.window_size, C)
-        
+
         # Window attention
         attn_windows = self.attn(x_windows, mask=attn_mask)
-        
+
         # Merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
         x = self._window_reverse(attn_windows, self.window_size, Hp, Wp)
-        
+
         # Reverse cyclic shift
         if self.shift_size > 0:
             x = torch.roll(x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
-        
+
         # Remove padding
         if pad_h > 0 or pad_w > 0:
             x = x[:, :H, :W, :]
-        
+
         x = x.view(B, H * W, C)
-        
+
         # Residual
         x = shortcut + self.drop_path(x)
-        
+
         # MLP
         x = x + self.drop_path(self.mlp(self.norm2(x)))
-        
+
         return x
 
 
