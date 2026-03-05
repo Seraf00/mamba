@@ -75,7 +75,7 @@ from data import CAMUSDataset, CAMUSPatient
 
 # Option 1: Use only ED/ES frames (default)
 dataset = CAMUSDataset(root_dir='path/to/CAMUS', split='train')
-print(f"ED/ES samples: {len(dataset)}")  # ~1280 samples
+print(f"ED/ES samples: {len(dataset)}")  # ~1600 samples (400 patients × 2 views × 2 phases)
 
 # Option 2: Include ALL half sequence frames (10-20x more data!)
 dataset_full = CAMUSDataset(
@@ -160,9 +160,9 @@ All Mamba-enhanced models support three SSM variants via `mamba_type` parameter:
 
 | Variant | Description | Use Case |
 |---------|-------------|----------|
-| `'mamba'` | Original Mamba (S6) selective state space | Best accuracy |
+| `'mamba'` | Original Mamba (S6) selective state space | General purpose |
 | `'mamba2'` | Mamba-2 with State Space Duality (SSD) | Faster training |
-| `'vmamba'` | Visual Mamba with 2D cross-scan (SS2D) | Better for images |
+| `'vmamba'` | Visual Mamba with 2D cross-scan (SS2D) | 2D spatial modeling |
 
 ### Model Factory Usage
 
@@ -282,12 +282,20 @@ Paper1/
 │   └── misc.py                   # General helpers (seeding, timing)
 │
 ├── scripts/                      # Entry point scripts
-│   ├── train.py                  # Training script
-│   ├── evaluate.py               # Evaluation script
+│   ├── train.py                  # Single model training
+│   ├── train_all_models.py       # Batch training (all models)
+│   ├── evaluate.py               # Single model evaluation
+│   ├── evaluate_all_models.py    # Batch evaluation (all models)
+│   ├── explain.py                # Single model explainability
+│   ├── explain_all_models.py     # Batch explainability (all models)
 │   ├── benchmark.py              # Speed/memory benchmarking
-│   └── explain.py                # Explainability script
+│   ├── param_match.py            # Parameter-matched wider base models
+│   ├── check_mamba_setup.py      # Verify Mamba/CUDA installation
+│   ├── setup_colab.py            # Colab environment setup
+│   └── validate_dataset.py       # Dataset integrity validation
 │
 ├── notebooks/                    # Jupyter notebooks
+│   ├── colab_training.ipynb      # Main Colab training notebook (3 sessions)
 │   ├── data_exploration.ipynb
 │   ├── model_comparison.ipynb
 │   └── explainability_demo.ipynb
@@ -336,8 +344,8 @@ heatmap = gradcam.generate(image, class_idx=1)  # LV Endo
 
 # Clinical report
 from explainability import ClinicalReport
-report = ClinicalReport(model, image, prediction)
-report.generate_pdf('patient_report.pdf')
+reporter = ClinicalReport(model, pixel_spacing=1.0, device='cuda')
+results = reporter.generate_report(image_ed, image_es, patient_id='P001', view='4CH', save_path='report.pdf')
 ```
 
 ### Uncertainty Estimation
@@ -347,7 +355,9 @@ from explainability import UncertaintyEstimator
 
 # MC Dropout uncertainty
 estimator = UncertaintyEstimator(model, method='mc_dropout', n_samples=20)
-prediction, uncertainty_map = estimator.predict_with_uncertainty(image)
+result = estimator.predict_with_uncertainty(image)
+prediction = result['prediction']        # Mean prediction across samples
+uncertainty_map = result['uncertainty']   # Predictive entropy map
 
 # Highlight uncertain regions (e.g., boundary regions)
 high_uncertainty_mask = uncertainty_map > threshold
@@ -409,8 +419,8 @@ data/CAMUS/
 
 ```bash
 # Clone repository
-git clone https://github.com/your-repo/mamba-cardiac-seg.git
-cd mamba-cardiac-seg
+git clone https://github.com/Seraf00/mamba.git
+cd mamba
 
 # Create environment
 conda create -n mamba-seg python=3.10
@@ -420,7 +430,8 @@ conda activate mamba-seg
 pip install -r requirements.txt
 
 # Install Mamba (requires CUDA)
-pip install mamba-ssm causal-conv1d
+pip install causal-conv1d --no-build-isolation
+pip install mamba-ssm --no-build-isolation
 ```
 
 ### Training
@@ -493,23 +504,23 @@ python scripts/explain.py \
 | **HD95** | 95th percentile Hausdorff Distance |
 | **ASSD** | Average Symmetric Surface Distance |
 
-### Expected Results (Baseline Performance)
+### Expected Results
 
-Performance on CAMUS test set (50 patients, ED/ES frames):
+Performance on CAMUS test set (50 patients, ED/ES frames). Results will be updated after training:
 
 | Model | Dice (LV) | Dice (MYO) | Dice (LA) | Mean Dice | Params (M) | GFLOPs |
 |-------|-----------|------------|-----------|-----------|------------|--------|
-| UNet V1 | 0.92 | 0.87 | 0.89 | 0.893 | 7.8 | 54.2 |
-| UNet V2 | 0.93 | 0.88 | 0.90 | 0.903 | 12.4 | 78.6 |
-| nnUNet | 0.94 | 0.89 | 0.91 | 0.913 | 31.2 | 142.3 |
-| **Mamba-UNet V1** | 0.94 | 0.89 | 0.91 | 0.913 | 5.2 | 38.4 |
-| **Mamba-UNet V2** | 0.95 | 0.90 | 0.92 | 0.923 | 8.6 | 52.1 |
-| **Pure-Mamba-UNet** | 0.93 | 0.88 | 0.90 | 0.903 | 3.1 | 22.8 |
+| UNet V1 | — | — | — | — | — | — |
+| UNet V2 | — | — | — | — | — | — |
+| nnUNet | — | — | — | — | — | — |
+| **Mamba-UNet V1** | — | — | — | — | — | — |
+| **Mamba-UNet V2** | — | — | — | — | — | — |
+| **Pure-Mamba-UNet** | — | — | — | — | — | — |
 
-**Key Findings:**
-- Mamba models achieve comparable or better accuracy with **30-60% fewer parameters**
-- Pure-Mamba-UNet offers best efficiency for edge deployment
-- Half sequence training improves Dice by ~1-2% across all models
+**Hypotheses:**
+- Mamba models may achieve comparable or better accuracy with fewer parameters
+- Pure-Mamba-UNet targets best efficiency for edge deployment
+- Half sequence training may improve Dice across all models
 
 ### Clinical Metrics
 
@@ -565,11 +576,11 @@ Performance on CAMUS test set (50 patients, ED/ES frames):
 ## 📄 Citation
 
 ```bibtex
-@article{your2025mamba,
+@article{seraf2026mamba,
   title={Mamba-Enhanced Cardiac Segmentation for Portable Echocardiography},
-  author={Your Name},
+  author={Seraf00},
   journal={arXiv preprint},
-  year={2025}
+  year={2026}
 }
 ```
 

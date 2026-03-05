@@ -257,6 +257,7 @@ class MambaBlock(nn.Module):
                         self.dim, self.d_state, self.d_conv, self.expand,
                         self.dt_rank, 0.001, 0.1, 1e-4, False, True
                     )
+                    self.to(x.device)  # Move new components to input device
                 # Fall through to manual implementation
                 batch_size, seq_len, _ = x.shape
                 xz = self.in_proj(x)
