@@ -59,34 +59,37 @@ def cleanup_gpu_memory():
         torch.cuda.reset_peak_memory_stats()
 
 
-def get_batch_size_for_model(model_name: str, default_batch_size: int, num_params: int) -> int:
+def get_model_training_overrides(model_name: str) -> Dict[str, Any]:
     """
-    Get appropriate batch size based on model size to avoid OOM.
-    
-    Args:
-        model_name: Name of the model
-        default_batch_size: Default batch size from args
-        num_params: Number of model parameters
-        
+    Get model-specific training parameter overrides.
+
+    Transformer-based models need warmup to avoid training collapse.
+    Pretrained-backbone models benefit from warmup to stabilize fine-tuning.
+
     Returns:
-        Adjusted batch size
+        Dict of TrainingConfig overrides for this model.
     """
-    # Models that are known to be memory-hungry
-    large_models = ['mamba', 'vmamba', 'fpn', 'gudu', 'deeplab']
-    
-    # Check if model is memory-intensive
-    is_mamba = any(m in model_name.lower() for m in ['mamba', 'vmamba'])
-    is_large = any(m in model_name.lower() for m in large_models)
-    
-    # Adjust based on parameter count
-    if num_params > 80e6:  # >80M params
-        return min(default_batch_size, 2)
-    elif num_params > 50e6 or is_mamba:  # >50M or any Mamba model
-        return min(default_batch_size, 4)
-    elif num_params > 30e6 or is_large:  # >30M or known large models
-        return min(default_batch_size, 6)
-    else:
-        return default_batch_size
+    overrides = {}
+
+    # Pure transformer models — need warmup + slightly higher LR
+    if model_name in ('swin_unet', 'mamba_swin_unet'):
+        overrides['scheduler'] = 'warmup_cosine'
+        overrides['warmup_epochs'] = 15
+        overrides['learning_rate'] = 5e-4
+
+    # Hybrid transformer models — need warmup
+    elif model_name in ('transunet', 'mamba_transunet'):
+        overrides['scheduler'] = 'warmup_cosine'
+        overrides['warmup_epochs'] = 10
+
+    # Pretrained backbone models — short warmup for stable fine-tuning
+    elif model_name in ('deeplab_v3', 'mamba_deeplab',
+                         'unet_resnet', 'mamba_unet_resnet',
+                         'fpn', 'mamba_fpn'):
+        overrides['scheduler'] = 'warmup_cosine'
+        overrides['warmup_epochs'] = 5
+
+    return overrides
 
 
 def check_mamba_installation():
@@ -436,17 +439,18 @@ def train_single_model(
 
     model = get_model(model_name, **model_kwargs)
     model = model.to(device)
-    
+
     num_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    
-    # Get adjusted batch size based on model size
-    batch_size = get_batch_size_for_model(model_name, args.batch_size, num_params)
-    if batch_size != args.batch_size:
-        print(f"  Adjusted batch size: {args.batch_size} -> {batch_size} (model has {num_params/1e6:.1f}M params)")
-    
+    batch_size = args.batch_size
+
     print(f"  Parameters: {num_params/1e6:.2f}M ({trainable_params/1e6:.2f}M trainable)")
     print(f"  Batch size: {batch_size}")
+
+    # Get model-specific training overrides (use model_name, not display_name)
+    model_overrides = get_model_training_overrides(model_name)
+    if model_overrides:
+        print(f"  Model overrides: {model_overrides}")
     
     # Create data loaders with adjusted batch size
     train_loader = DataLoader(
@@ -474,14 +478,15 @@ def train_single_model(
         ce_weight=args.ce_weight
     )
     
-    # Training config - use adjusted batch size
+    # Training config — apply model-specific overrides
     config = TrainingConfig(
         epochs=args.epochs,
-        batch_size=batch_size,  # Use adjusted batch size
-        learning_rate=args.lr,
+        batch_size=batch_size,
+        learning_rate=model_overrides.get('learning_rate', args.lr),
         weight_decay=args.weight_decay,
         optimizer=args.optimizer,
-        scheduler=args.scheduler,
+        scheduler=model_overrides.get('scheduler', args.scheduler),
+        warmup_epochs=model_overrides.get('warmup_epochs', 5),
         save_dir=str(model_dir),
         device=str(device),
         use_amp=args.mixed_precision,
@@ -639,17 +644,21 @@ def train_single_model_cv(
         model = model.to(device)
 
         num_params = sum(p.numel() for p in model.parameters())
-        batch_size = get_batch_size_for_model(model_name, args.batch_size, num_params)
+        batch_size = args.batch_size
 
         fold_dir = exp_dir / display_name / f'fold_{fold_idx}'
         fold_dir.mkdir(parents=True, exist_ok=True)
 
         criterion = CombinedLoss(dice_weight=args.dice_weight, ce_weight=args.ce_weight)
 
+        model_overrides = get_model_training_overrides(model_name)
         config = TrainingConfig(
             epochs=args.epochs, batch_size=batch_size,
-            learning_rate=args.lr, weight_decay=args.weight_decay,
-            optimizer=args.optimizer, scheduler=args.scheduler,
+            learning_rate=model_overrides.get('learning_rate', args.lr),
+            weight_decay=args.weight_decay,
+            optimizer=args.optimizer,
+            scheduler=model_overrides.get('scheduler', args.scheduler),
+            warmup_epochs=model_overrides.get('warmup_epochs', 5),
             save_dir=str(fold_dir), device=str(device),
             use_amp=args.mixed_precision, num_workers=args.num_workers,
         )

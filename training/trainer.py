@@ -4,6 +4,7 @@ Training loop and trainer class for cardiac segmentation.
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import numpy as np
 from typing import Optional, Dict, Callable, List
@@ -141,12 +142,20 @@ class Trainer:
         """Create learning rate scheduler."""
         total_steps = len(self.train_loader) * self.config.epochs
         warmup_steps = len(self.train_loader) * self.config.warmup_epochs
-        
-        if self.config.scheduler == 'cosine':
+
+        if self.config.scheduler == 'warmup_cosine':
+            from training.scheduler import WarmupCosineScheduler
+            return WarmupCosineScheduler(
+                self.optimizer,
+                warmup_epochs=self.config.warmup_epochs,
+                total_epochs=self.config.epochs,
+                min_lr=1e-7
+            )
+        elif self.config.scheduler == 'cosine':
             from torch.optim.lr_scheduler import CosineAnnealingLR
             return CosineAnnealingLR(
                 self.optimizer,
-                T_max=self.config.epochs - self.config.warmup_epochs
+                T_max=self.config.epochs
             )
         elif self.config.scheduler == 'poly':
             from torch.optim.lr_scheduler import PolynomialLR
@@ -260,6 +269,48 @@ class Trainer:
         
         return self.history
     
+    def _compute_loss_with_deep_supervision(
+        self, outputs, masks: torch.Tensor
+    ) -> tuple:
+        """
+        Compute loss, handling deep supervision if model returns aux outputs.
+
+        Args:
+            outputs: Model output — tensor, or dict with 'out' and optional 'aux'.
+            masks: Ground truth masks (B, H, W).
+
+        Returns:
+            (loss, main_output_tensor) — loss is the scalar to backprop,
+            main_output_tensor is the primary prediction for logging.
+        """
+        if isinstance(outputs, dict) and 'aux' in outputs:
+            # Deep supervision: main output + weighted auxiliary losses
+            main_output = outputs['out']
+            loss = self.criterion(main_output, masks)
+
+            aux_outputs = outputs['aux']
+            n_aux = len(aux_outputs)
+            for i, aux in enumerate(aux_outputs):
+                # Exponentially decreasing weights: 0.5, 0.25, 0.125, ...
+                weight = 0.5 ** (n_aux - i)
+                # Resize masks to match auxiliary output resolution
+                if aux.shape[2:] != masks.shape[1:]:
+                    aux_masks = F.interpolate(
+                        masks.unsqueeze(1).float(),
+                        size=aux.shape[2:],
+                        mode='nearest'
+                    ).squeeze(1).long()
+                else:
+                    aux_masks = masks
+                loss = loss + weight * self.criterion(aux, aux_masks)
+
+            return loss, main_output
+        else:
+            if isinstance(outputs, dict):
+                outputs = outputs['out']
+            loss = self.criterion(outputs, masks)
+            return loss, outputs
+
     def _train_epoch(self) -> float:
         """Train for one epoch with optional gradient accumulation."""
         self.model.train()
@@ -277,9 +328,7 @@ class Trainer:
             if self.config.use_amp and self.scaler is not None:
                 with torch.amp.autocast('cuda'):
                     outputs = self.model(images)
-                    if isinstance(outputs, dict):
-                        outputs = outputs['out']
-                    loss = self.criterion(outputs, masks)
+                    loss, _ = self._compute_loss_with_deep_supervision(outputs, masks)
                     if accum_steps > 1:
                         loss = loss / accum_steps
 
@@ -291,9 +340,7 @@ class Trainer:
                     self.optimizer.zero_grad()
             else:
                 outputs = self.model(images)
-                if isinstance(outputs, dict):
-                    outputs = outputs['out']
-                loss = self.criterion(outputs, masks)
+                loss, _ = self._compute_loss_with_deep_supervision(outputs, masks)
                 if accum_steps > 1:
                     loss = loss / accum_steps
 
