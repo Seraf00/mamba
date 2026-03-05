@@ -237,9 +237,14 @@ class Trainer:
                         'val_dice': val_dice,
                         'is_best': is_best
                     })
-            
-            # Early stopping
-            if self.config.early_stopping and patience_counter >= self.config.patience:
+
+            # Early stopping — check callback signal OR internal counter
+            should_stop = False
+            for callback in self.callbacks:
+                if hasattr(callback, 'should_stop') and callback.should_stop:
+                    should_stop = True
+                    break
+            if should_stop or (self.config.early_stopping and patience_counter >= self.config.patience):
                 print(f"Early stopping triggered after {epoch + 1} epochs")
                 break
         

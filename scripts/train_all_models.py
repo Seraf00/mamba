@@ -432,7 +432,9 @@ def train_single_model(
         optimizer=args.optimizer,
         scheduler=args.scheduler,
         save_dir=str(model_dir),
-        device=str(device)
+        device=str(device),
+        use_amp=args.mixed_precision,
+        num_workers=args.num_workers,
     )
     
     # Callbacks

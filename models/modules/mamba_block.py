@@ -678,31 +678,35 @@ class Mamba2Block(nn.Module):
                 #   C: (batch, seqlen, ngroups, dstate)
                 #   D: (nheads, headdim) or (nheads,)
                 
+                # Cast all inputs to float32 for Triton kernel compatibility under AMP
+                x_f = x.contiguous().float()
+                dt_f = dt.contiguous().float()
+
                 # Get A as 1D (nheads,) - just use first element per head
                 # A_log is (n_heads, head_dim, d_state), we need (n_heads,)
                 A_1d = -torch.exp(self.A_log[:, 0, 0].float())  # (n_heads,)
-                
+
                 # B and C are (B, L, N), need (B, L, ngroups=1, N)
-                B_reshaped = B.unsqueeze(2)  # (B, L, 1, N)
-                C_reshaped = C.unsqueeze(2)  # (B, L, 1, N)
-                
+                B_reshaped = B.unsqueeze(2).float()  # (B, L, 1, N)
+                C_reshaped = C.unsqueeze(2).float()  # (B, L, 1, N)
+
                 # D is (n_heads, head_dim)
-                D = self.D.float()
-                
+                D_f = self.D.float()
+
                 # Call the CUDA kernel
                 y = mamba_chunk_scan_combined(
-                    x.contiguous(),
-                    dt.contiguous(),
+                    x_f,
+                    dt_f,
                     A_1d.contiguous(),
                     B_reshaped.contiguous(),
                     C_reshaped.contiguous(),
                     chunk_size=self.chunk_size,
-                    D=D.contiguous(),
+                    D=D_f.contiguous(),
                     z=None,
                     dt_bias=self.dt_bias.float().contiguous(),
                     dt_softplus=False,  # We already applied softplus
                 )
-                return y
+                return y.to(x.dtype)
             except Exception as e:
                 # Fall back to PyTorch on any error
                 if not hasattr(self, '_cuda_warning_shown'):
@@ -1031,19 +1035,24 @@ class SS2D(nn.Module):
         # Try CUDA-accelerated selective_scan_fn
         if VMAMBA_CUDA_AVAILABLE and selective_scan_fn is not None:
             try:
+                # selective_scan_fn requires all tensors to have matching dtypes.
+                # Under AMP, activations may be float16 while parameters are float32.
+                # Cast everything to float32 for numerical stability.
+                scan_dtype = torch.float32
+
                 # Reshape tensors to match selective_scan_fn expectations (VMamba style)
                 # u: (B, L, D) -> (B, D, L)
-                u = rearrange(x, 'b l d -> b d l').contiguous()
+                u = rearrange(x, 'b l d -> b d l').contiguous().to(scan_dtype)
                 # delta: (B, L, D) -> (B, D, L)
-                delta_t = rearrange(delta, 'b l d -> b d l').contiguous()
+                delta_t = rearrange(delta, 'b l d -> b d l').contiguous().to(scan_dtype)
                 # A is already (D, N)
-                A_t = A.contiguous()
+                A_t = A.contiguous().to(scan_dtype)
                 # B: (B, L, N) -> (B, 1, N, L) - add group dimension
-                B_t = rearrange(B, 'b l n -> b 1 n l').contiguous()
+                B_t = rearrange(B, 'b l n -> b 1 n l').contiguous().to(scan_dtype)
                 # C: (B, L, N) -> (B, 1, N, L)
-                C_t = rearrange(C, 'b l n -> b 1 n l').contiguous()
+                C_t = rearrange(C, 'b l n -> b 1 n l').contiguous().to(scan_dtype)
                 # D is already (D,)
-                D_t = D.contiguous()
+                D_t = D.contiguous().to(scan_dtype)
                 
                 # Call selective_scan_fn
                 # Returns: (B, D, L)
@@ -1055,8 +1064,8 @@ class SS2D(nn.Module):
                     return_last_state=False
                 )
                 
-                # Reshape back: (B, D, L) -> (B, L, D)
-                y = rearrange(y, 'b d l -> b l d')
+                # Reshape back: (B, D, L) -> (B, L, D), cast to original dtype
+                y = rearrange(y, 'b d l -> b l d').to(x.dtype)
                 return y
                 
             except Exception as e:
