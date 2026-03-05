@@ -205,12 +205,12 @@ def run_attention_visualization(
     output_dir: Path
 ):
     """Visualize attention maps."""
-    from explainability import AttentionExtractor
-    
+    from explainability import AttentionVisualizer
+
     print("Extracting attention maps...")
-    
-    extractor = AttentionExtractor(model)
-    attentions = extractor.extract(image)
+
+    extractor = AttentionVisualizer(model)
+    attentions = extractor.get_attention_maps(image)
     
     if not attentions:
         print("  No attention maps found in model")
@@ -312,11 +312,11 @@ def run_feature_map_visualization(
     output_dir: Path
 ):
     """Visualize intermediate feature maps."""
-    from explainability import FeatureMapExtractor
-    
+    from explainability import FeatureExtractor
+
     print("Extracting feature maps...")
-    
-    extractor = FeatureMapExtractor(model)
+
+    extractor = FeatureExtractor(model)
     features = extractor.extract(image)
     
     if not features:
@@ -358,23 +358,23 @@ def generate_clinical_report(
     args
 ):
     """Generate clinical explainability report."""
-    from explainability import ClinicalReportGenerator
-    
+    from explainability import ClinicalReport
+
     print("Generating clinical report...")
-    
-    generator = ClinicalReportGenerator(model)
-    
+
+    generator = ClinicalReport(model)
+
     # Get prediction
     with torch.no_grad():
         output = model(image)
         if isinstance(output, dict):
             output = output['out']
         pred = output.argmax(dim=1)
-    
+
     report = generator.generate_report(
         image=image,
         prediction=pred,
-        save_dir=output_dir
+        save_dir=str(output_dir)
     )
     
     # Save report
