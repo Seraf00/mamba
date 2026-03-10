@@ -134,8 +134,8 @@ Reference: Leclerc et al., "Deep Learning for Segmentation using an Open Large-S
 | **UNet-ResNet** | UNet with ResNet encoder (18/34/50/101/152) | ✅ |
 | **DeepLab V3** | Atrous Spatial Pyramid Pooling (ASPP) | ✅ |
 | **nnUNet** | Instance norm, LeakyReLU, deep supervision | ❌ |
-| **GUDU** | Dense skip connections, global context | ❌ |
-| **Swin-UNet** | Pure Swin Transformer architecture | ❌ |
+| **DenseContextUNet** | Dense skip connections, global context | ❌ |
+| **Swin-UNet** | Pure Swin Transformer architecture | ✅ |
 | **TransUNet** | Hybrid CNN (ResNet) + Vision Transformer | ✅ |
 | **FPN** | Feature Pyramid Network for multi-scale | ✅ |
 
@@ -148,7 +148,7 @@ Reference: Leclerc et al., "Deep Learning for Segmentation using an Open Large-S
 | **Mamba-UNet-ResNet** | Gated Fusion | GlobalContextMambaBottleneck, GatedMambaSkip |
 | **Mamba-DeepLab** | ASPP Branch | MambaASPP (parallel Mamba branch), decoder Mamba |
 | **Mamba-nnUNet** | Dual-Path | DualPathMambaBottleneck, deep supervision |
-| **Mamba-GUDU** | Channel Attention | MambaChannelAttention, MambaGlobalContext |
+| **Mamba-DenseContextUNet** | Channel Attention | MambaChannelAttention, MambaGlobalContext |
 | **Mamba-Swin-UNet** | Gated Swin-Mamba | SwinMambaBlock with gated attention+Mamba fusion |
 | **Mamba-TransUNet** | ViT Enhancement | MambaViTBlock, cascaded Mamba upsampler |
 | **Mamba-FPN** | Multi-Scale | MambaLateralConnection, MambaTopDownPath |
@@ -172,7 +172,8 @@ from models import get_model, list_models
 # List all available models
 print(list_models())
 # Output: ['unet_v1', 'unet_v2', 'unet_resnet', 'deeplab_v3', 'nnunet', 'gudu',
-#          'swin_unet', 'transunet', 'fpn', 'mamba_unet_v1', 'mamba_unet_v2', ...]
+#          'swin_unet', 'transunet', 'fpn', 'dense_context_unet',
+#          'mamba_unet_v1', 'mamba_unet_v2', ...]
 
 # Create a model
 model = get_model(
@@ -217,7 +218,7 @@ Paper1/
 │   │   ├── unet_resnet.py        # UNet with ResNet encoder
 │   │   ├── deeplab_v3.py         # DeepLabV3 with ASPP
 │   │   ├── nnunet.py             # nnUNet architecture
-│   │   ├── gudu.py               # Dense UNet with global context
+│   │   ├── gudu.py               # DenseContextUNet — dense skip + global context
 │   │   ├── swin_unet.py          # Swin Transformer UNet
 │   │   ├── transunet.py          # CNN-Transformer hybrid
 │   │   └── fpn.py                # Feature Pyramid Network
@@ -229,7 +230,7 @@ Paper1/
 │   │   ├── mamba_unet_resnet.py  # Gated Mamba with ResNet
 │   │   ├── mamba_deeplab.py      # MambaASPP integration
 │   │   ├── mamba_nnunet.py       # Dual-path Mamba nnUNet
-│   │   ├── mamba_gudu.py         # Channel attention Mamba
+│   │   ├── mamba_gudu.py         # Mamba-DenseContextUNet — channel attention Mamba
 │   │   ├── mamba_swin_unet.py    # Swin-Mamba hybrid
 │   │   ├── mamba_transunet.py    # ViT-Mamba hybrid
 │   │   ├── mamba_fpn.py          # Multi-scale Mamba FPN
@@ -594,4 +595,4 @@ Contributions are welcome! Please read our contributing guidelines before submit
 
 ## 📧 Contact
 
-For questions or collaborations, please open an issue or contact [your-email@example.com].
+For questions or collaborations, please open an issue on this repository.
