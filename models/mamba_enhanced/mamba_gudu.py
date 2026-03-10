@@ -1,8 +1,11 @@
 """
-Mamba-GUDU - GUDU (Globally Guided Dense UNet) Enhanced with Mamba
+Mamba-DenseContextUNet - DenseContextUNet Enhanced with Mamba
 
-GUDU architecture with Mamba integration for enhanced
+DenseContextUNet architecture with Mamba integration for enhanced
 global context modeling and dense feature refinement.
+
+Note: This is a custom architecture, NOT the GUDU paper (Sfakianakis et al.,
+2023), which describes a data augmentation strategy.
 
 Integration points:
 - Global context: Replace/augment with Mamba for better long-range
@@ -230,11 +233,11 @@ class MambaDenseSkip(nn.Module):
         return self.fusion(torch.cat(projected, dim=1))
 
 
-class MambaGUDU(nn.Module):
+class MambaDenseContextUNet(nn.Module):
     """
-    Mamba-Enhanced GUDU (Globally Guided Dense UNet).
-    
-    GUDU with Mamba integration for improved global context:
+    Mamba-Enhanced DenseContextUNet.
+
+    DenseContextUNet with Mamba integration for improved global context:
     - Dense blocks with Mamba in deeper stages
     - Mamba global context module
     - Mamba-enhanced channel attention
@@ -426,14 +429,18 @@ class MambaGUDU(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
 
+# Backward compatibility alias
+MambaGUDU = MambaDenseContextUNet
+
+
 # Convenience functions
-def mamba_gudu_small(
+def mamba_dense_context_unet_small(
     in_channels: int = 1,
     num_classes: int = 4,
     mamba_type: str = 'vmamba'
-) -> MambaGUDU:
-    """Small Mamba-GUDU."""
-    return MambaGUDU(
+) -> MambaDenseContextUNet:
+    """Small Mamba-DenseContextUNet."""
+    return MambaDenseContextUNet(
         in_channels, num_classes,
         base_features=32,
         growth_rate=16,
@@ -442,13 +449,13 @@ def mamba_gudu_small(
     )
 
 
-def mamba_gudu_base(
+def mamba_dense_context_unet_base(
     in_channels: int = 1,
     num_classes: int = 4,
     mamba_type: str = 'vmamba'
-) -> MambaGUDU:
-    """Standard Mamba-GUDU."""
-    return MambaGUDU(
+) -> MambaDenseContextUNet:
+    """Standard Mamba-DenseContextUNet."""
+    return MambaDenseContextUNet(
         in_channels, num_classes,
         base_features=64,
         growth_rate=32,
@@ -457,13 +464,13 @@ def mamba_gudu_base(
     )
 
 
-def mamba_gudu_large(
+def mamba_dense_context_unet_large(
     in_channels: int = 1,
     num_classes: int = 4,
     mamba_type: str = 'vmamba'
-) -> MambaGUDU:
-    """Large Mamba-GUDU."""
-    return MambaGUDU(
+) -> MambaDenseContextUNet:
+    """Large Mamba-DenseContextUNet."""
+    return MambaDenseContextUNet(
         in_channels, num_classes,
         base_features=64,
         growth_rate=48,
@@ -474,14 +481,14 @@ def mamba_gudu_large(
 
 if __name__ == '__main__':
     # Test the model
-    model = MambaGUDU(
+    model = MambaDenseContextUNet(
         in_channels=1, num_classes=4,
         mamba_type='vmamba'
     )
-    print(f"Mamba-GUDU Parameters: {model.count_parameters():,}")
-    
+    print(f"Mamba-DenseContextUNet Parameters: {model.count_parameters():,}")
+
     x = torch.randn(2, 1, 256, 256)
     y = model(x)
-    
+
     print(f"Input shape: {x.shape}")
     print(f"Output shape: {y.shape}")

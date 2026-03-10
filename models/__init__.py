@@ -10,7 +10,7 @@ from .base.unet_v2 import UNetV2
 from .base.unet_resnet import UNetResNet
 from .base.deeplab_v3 import DeepLabV3
 from .base.nnunet import nnUNet
-from .base.gudu import GUDU
+from .base.gudu import DenseContextUNet, GUDU  # GUDU is backward compat alias
 from .base.swin_unet import SwinUNet
 from .base.transunet import TransUNet
 from .base.fpn import FPNUNet as FPN, FPNUNet as FPNSegmentation
@@ -21,7 +21,7 @@ from .mamba_enhanced.mamba_unet_v2 import MambaUNetV2
 from .mamba_enhanced.mamba_unet_resnet import MambaUNetResNet
 from .mamba_enhanced.mamba_deeplab import MambaDeepLab
 from .mamba_enhanced.mamba_nnunet import MambaNNUNet
-from .mamba_enhanced.mamba_gudu import MambaGUDU
+from .mamba_enhanced.mamba_gudu import MambaDenseContextUNet, MambaGUDU  # MambaGUDU is backward compat alias
 from .mamba_enhanced.mamba_swin_unet import MambaSwinUNet
 from .mamba_enhanced.mamba_transunet import MambaTransUNet
 from .mamba_enhanced.mamba_fpn import MambaFPN
@@ -48,7 +48,8 @@ MODEL_REGISTRY = {
     'unet_resnet': UNetResNet,
     'deeplab_v3': DeepLabV3,
     'nnunet': nnUNet,
-    'gudu': GUDU,
+    'dense_context_unet': DenseContextUNet,
+    'gudu': DenseContextUNet,  # backward compat alias
     'swin_unet': SwinUNet,
     'transunet': TransUNet,
     'fpn': FPNSegmentation,
@@ -60,7 +61,8 @@ MODEL_REGISTRY = {
     'mamba_unet_resnet': MambaUNetResNet,
     'mamba_deeplab': MambaDeepLab,
     'mamba_nnunet': MambaNNUNet,
-    'mamba_gudu': MambaGUDU,
+    'mamba_dense_context_unet': MambaDenseContextUNet,
+    'mamba_gudu': MambaDenseContextUNet,  # backward compat alias
     'mamba_swin_unet': MambaSwinUNet,
     'mamba_transunet': MambaTransUNet,
     'mamba_fpn': MambaFPN,
@@ -105,6 +107,7 @@ def get_model(
     
     # Models that support pretrained backbone
     pretrained_models = {'unet_resnet', 'deeplab_v3', 'transunet', 'fpn',
+                        'swin_unet',  # Swin-UNet now supports pretrained Swin-Tiny
                         'mamba_unet_resnet', 'mamba_deeplab', 'mamba_transunet', 'mamba_fpn'}
     
     # Filter out pretrained if model doesn't support it
@@ -159,6 +162,7 @@ __all__ = [
     'UNetResNet',
     'DeepLabV3',
     'nnUNet',
+    'DenseContextUNet',
     'GUDU',
     'SwinUNet',
     'TransUNet',
@@ -171,6 +175,7 @@ __all__ = [
     'MambaUNetResNet',
     'MambaDeepLab',
     'MambaUNetNN',
+    'MambaDenseContextUNet',
     'MambaGUDU',
     'MambaSwinUNet',
     'MambaTransUNet',

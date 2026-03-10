@@ -7,7 +7,7 @@ from .mamba_unet_v2 import MambaUNetV2
 from .mamba_unet_resnet import MambaUNetResNet
 from .mamba_deeplab import MambaDeepLab
 from .mamba_nnunet import MambaNNUNet
-from .mamba_gudu import MambaGUDU
+from .mamba_gudu import MambaDenseContextUNet, MambaGUDU
 from .mamba_swin_unet import MambaSwinUNet
 from .mamba_transunet import MambaTransUNet
 from .mamba_fpn import MambaFPN
@@ -19,6 +19,7 @@ __all__ = [
     'MambaUNetResNet',
     'MambaDeepLab',
     'MambaNNUNet',
+    'MambaDenseContextUNet',
     'MambaGUDU',
     'MambaSwinUNet',
     'MambaTransUNet',

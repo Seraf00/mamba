@@ -17,6 +17,30 @@ import torch.nn.functional as F
 from typing import List, Optional, Tuple
 from einops import rearrange
 
+try:
+    import timm
+    HAS_TIMM = True
+except ImportError:
+    HAS_TIMM = False
+
+
+class DropPath(nn.Module):
+    """Drop paths (Stochastic Depth) per sample (Huang et al., 2016)."""
+
+    def __init__(self, drop_prob: float = 0.0):
+        super().__init__()
+        self.drop_prob = drop_prob
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.drop_prob == 0.0 or not self.training:
+            return x
+        keep_prob = 1 - self.drop_prob
+        shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+        random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+        random_tensor.floor_()
+        output = x.div(keep_prob) * random_tensor
+        return output
+
 
 class PatchEmbed(nn.Module):
     """
@@ -299,7 +323,7 @@ class SwinTransformerBlock(nn.Module):
             qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop
         )
         
-        self.drop_path = nn.Identity()  # Simplified - could add DropPath
+        self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
         
         self.norm2 = nn.LayerNorm(dim)
         mlp_hidden = int(dim * mlp_ratio)
@@ -461,11 +485,17 @@ class SwinTransformerStage(nn.Module):
         mlp_ratio: float = 4.0,
         drop: float = 0.0,
         attn_drop: float = 0.0,
-        drop_path: float = 0.0,
+        drop_path: list = None,
         downsample: bool = True
     ):
         super().__init__()
-        
+
+        # If drop_path is a list, use per-block rates; if float, uniform
+        if drop_path is None:
+            drop_path = [0.0] * depth
+        elif isinstance(drop_path, (int, float)):
+            drop_path = [float(drop_path)] * depth
+
         self.blocks = nn.ModuleList([
             SwinTransformerBlock(
                 dim=dim,
@@ -475,7 +505,7 @@ class SwinTransformerStage(nn.Module):
                 mlp_ratio=mlp_ratio,
                 drop=drop,
                 attn_drop=attn_drop,
-                drop_path=drop_path
+                drop_path=drop_path[i]
             )
             for i in range(depth)
         ])
@@ -595,21 +625,22 @@ class SwinUNet(nn.Module):
         img_size: int = 224,
         patch_size: int = 4,
         embed_dim: int = 96,
-        depths: List[int] = [2, 2, 2, 2],
+        depths: List[int] = [2, 2, 6, 2],
         num_heads: List[int] = [3, 6, 12, 24],
         window_size: int = 7,
         mlp_ratio: float = 4.0,
         drop_rate: float = 0.0,
         attn_drop_rate: float = 0.0,
-        pretrained: bool = False,  # Ignored, included for API compatibility
+        drop_path_rate: float = 0.1,
+        pretrained: bool = True,
         **kwargs  # Ignore other unknown arguments
     ):
         super().__init__()
-        
+
         self.num_classes = num_classes
         self.num_layers = len(depths)
         self.embed_dim = embed_dim
-        
+
         # Patch embedding
         self.patch_embed = PatchEmbed(
             img_size=img_size,
@@ -617,11 +648,16 @@ class SwinUNet(nn.Module):
             in_channels=in_channels,
             embed_dim=embed_dim
         )
-        
+
         self.pos_drop = nn.Dropout(p=drop_rate)
-        
+
+        # Compute stochastic depth rates (linearly increasing per block)
+        total_depth = sum(depths)
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, total_depth)]
+
         # Encoder
         self.encoder_stages = nn.ModuleList()
+        cur = 0
         for i in range(self.num_layers):
             dim = embed_dim * (2 ** i)
             self.encoder_stages.append(
@@ -633,10 +669,12 @@ class SwinUNet(nn.Module):
                     mlp_ratio=mlp_ratio,
                     drop=drop_rate,
                     attn_drop=attn_drop_rate,
+                    drop_path=dpr[cur:cur + depths[i]],
                     downsample=(i < self.num_layers - 1)
                 )
             )
-        
+            cur += depths[i]
+
         # Bottleneck
         bottleneck_dim = embed_dim * (2 ** (self.num_layers - 1))
         self.bottleneck = nn.Sequential(
@@ -644,7 +682,7 @@ class SwinUNet(nn.Module):
             nn.Linear(bottleneck_dim, bottleneck_dim),
             nn.GELU()
         )
-        
+
         # Decoder
         self.decoder_stages = nn.ModuleList()
         for i in range(self.num_layers - 1, 0, -1):
@@ -658,12 +696,16 @@ class SwinUNet(nn.Module):
                     mlp_ratio=mlp_ratio
                 )
             )
-        
+
         # Final expansion and head
         self.final_expand = PatchExpanding(embed_dim)
         self.final_proj = nn.Linear(embed_dim // 2, patch_size ** 2 * num_classes)
-        
+
         self.apply(self._init_weights)
+
+        # Load pretrained Swin-Tiny encoder weights from ImageNet
+        if pretrained:
+            self._load_pretrained_swin(in_channels)
     
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -673,7 +715,95 @@ class SwinUNet(nn.Module):
         elif isinstance(m, nn.LayerNorm):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
-    
+
+    def _load_pretrained_swin(self, in_channels: int):
+        """
+        Load pretrained Swin-Tiny (ImageNet-1K) encoder weights via timm.
+
+        Maps timm's swin_tiny_patch4_window7_224 weights to our encoder:
+          - patch_embed (proj + norm)
+          - encoder transformer blocks (norm1/2, attn, mlp)
+          - patch merging / downsample layers
+        Decoder, bottleneck, and final_proj are left randomly initialised
+        because there is no pretrained equivalent.
+        """
+        if not HAS_TIMM:
+            print("[SwinUNet] WARNING: timm is not installed -- skipping "
+                  "pretrained weight loading. Install with: pip install timm")
+            return
+
+        print("[SwinUNet] Loading pretrained Swin-Tiny (ImageNet-1K) encoder weights ...")
+        swin_pretrained = timm.create_model(
+            'swin_tiny_patch4_window7_224', pretrained=True
+        )
+        src = swin_pretrained.state_dict()
+
+        # Build a mapping from timm keys -> our keys
+        pretrained_dict = {}
+
+        # ---- patch_embed ----
+        pretrained_dict['patch_embed.proj.weight'] = src['patch_embed.proj.weight']
+        pretrained_dict['patch_embed.proj.bias']   = src['patch_embed.proj.bias']
+        pretrained_dict['patch_embed.norm.weight']  = src['patch_embed.norm.weight']
+        pretrained_dict['patch_embed.norm.bias']    = src['patch_embed.norm.bias']
+
+        # ---- encoder stages ----
+        for i in range(self.num_layers):
+            # Transformer blocks
+            stage = self.encoder_stages[i]
+            for j in range(len(stage.blocks)):
+                src_prefix = f'layers.{i}.blocks.{j}'
+                dst_prefix = f'encoder_stages.{i}.blocks.{j}'
+
+                # norm1, norm2
+                for norm in ('norm1', 'norm2'):
+                    pretrained_dict[f'{dst_prefix}.{norm}.weight'] = src[f'{src_prefix}.{norm}.weight']
+                    pretrained_dict[f'{dst_prefix}.{norm}.bias']   = src[f'{src_prefix}.{norm}.bias']
+
+                # attention: qkv, proj, relative_position_bias_table
+                pretrained_dict[f'{dst_prefix}.attn.qkv.weight'] = src[f'{src_prefix}.attn.qkv.weight']
+                pretrained_dict[f'{dst_prefix}.attn.qkv.bias']   = src[f'{src_prefix}.attn.qkv.bias']
+                pretrained_dict[f'{dst_prefix}.attn.proj.weight'] = src[f'{src_prefix}.attn.proj.weight']
+                pretrained_dict[f'{dst_prefix}.attn.proj.bias']   = src[f'{src_prefix}.attn.proj.bias']
+                pretrained_dict[f'{dst_prefix}.attn.relative_position_bias_table'] = \
+                    src[f'{src_prefix}.attn.relative_position_bias_table']
+                # relative_position_index is a buffer computed in __init__; skip it
+
+                # MLP: timm uses mlp.fc1 / mlp.fc2; ours is nn.Sequential
+                #   mlp.fc1 -> mlp.0 (Linear)
+                #   mlp.fc2 -> mlp.3 (Linear, after GELU + Dropout)
+                pretrained_dict[f'{dst_prefix}.mlp.0.weight'] = src[f'{src_prefix}.mlp.fc1.weight']
+                pretrained_dict[f'{dst_prefix}.mlp.0.bias']   = src[f'{src_prefix}.mlp.fc1.bias']
+                pretrained_dict[f'{dst_prefix}.mlp.3.weight'] = src[f'{src_prefix}.mlp.fc2.weight']
+                pretrained_dict[f'{dst_prefix}.mlp.3.bias']   = src[f'{src_prefix}.mlp.fc2.bias']
+
+            # Downsample (PatchMerging) -- last stage has no downsample
+            if stage.downsample is not None:
+                src_prefix = f'layers.{i}.downsample'
+                dst_prefix = f'encoder_stages.{i}.downsample'
+                pretrained_dict[f'{dst_prefix}.reduction.weight'] = src[f'{src_prefix}.reduction.weight']
+                pretrained_dict[f'{dst_prefix}.norm.weight']      = src[f'{src_prefix}.norm.weight']
+                pretrained_dict[f'{dst_prefix}.norm.bias']        = src[f'{src_prefix}.norm.bias']
+
+        # ---- Handle grayscale / non-RGB input channels ----
+        if in_channels != 3:
+            # Average the RGB weights to get a single-channel kernel
+            pretrained_weight = pretrained_dict['patch_embed.proj.weight']  # (96, 3, 4, 4)
+            pretrained_dict['patch_embed.proj.weight'] = pretrained_weight.mean(
+                dim=1, keepdim=True
+            )
+            if in_channels > 1:
+                pretrained_dict['patch_embed.proj.weight'] = \
+                    pretrained_dict['patch_embed.proj.weight'].repeat(1, in_channels, 1, 1)
+
+        # Load the mapped weights (strict=False so decoder/bottleneck/final_proj are skipped)
+        msg = self.load_state_dict(pretrained_dict, strict=False)
+        print(f"[SwinUNet] Pretrained encoder loaded. "
+              f"Missing keys (decoder/bottleneck -- expected): {len(msg.missing_keys)}, "
+              f"Unexpected keys: {len(msg.unexpected_keys)}")
+
+        del swin_pretrained  # free memory
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass.
@@ -729,11 +859,12 @@ class SwinUNet(nn.Module):
 
 
 # Convenience functions
-def swin_unet_tiny(in_channels: int = 1, num_classes: int = 4, img_size: int = 224) -> SwinUNet:
-    """Tiny Swin-UNet."""
+def swin_unet_tiny(in_channels: int = 1, num_classes: int = 4, img_size: int = 224, pretrained: bool = True) -> SwinUNet:
+    """Tiny Swin-UNet (depths=[2,2,6,2], embed_dim=96) matching Cao et al., 2021."""
     return SwinUNet(
         in_channels, num_classes, img_size,
-        embed_dim=96, depths=[2, 2, 2, 2], num_heads=[3, 6, 12, 24]
+        embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24],
+        pretrained=pretrained
     )
 
 

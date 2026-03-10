@@ -151,7 +151,7 @@ BASE_MODELS = [
     'unet_resnet',
     'deeplab_v3',
     'nnunet',
-    'gudu',
+    'dense_context_unet',
     'swin_unet',
     'transunet',
     'fpn',
@@ -163,7 +163,7 @@ MAMBA_MODELS = [
     'mamba_unet_resnet',
     'mamba_deeplab',
     'mamba_nnunet',
-    'mamba_gudu',
+    'mamba_dense_context_unet',
     'mamba_swin_unet',
     'mamba_transunet',
     'mamba_fpn',
@@ -328,7 +328,7 @@ def get_models_to_train(args) -> List[Dict[str, Any]]:
             ('unet_resnet', 'mamba_unet_resnet'), ('deeplab_v3', 'mamba_deeplab'),
             ('fpn', 'mamba_fpn'), ('nnunet', 'mamba_nnunet'),
             ('swin_unet', 'mamba_swin_unet'), ('transunet', 'mamba_transunet'),
-            ('gudu', 'mamba_gudu'),
+            ('dense_context_unet', 'mamba_dense_context_unet'),
         ]}
         base_to_mamba = {v: k for k, v in mamba_to_base.items()}
 

@@ -7,7 +7,7 @@ from .unet_v2 import UNetV2
 from .unet_resnet import UNetResNet
 from .deeplab_v3 import DeepLabV3
 from .nnunet import nnUNet
-from .gudu import GUDU
+from .gudu import DenseContextUNet, GUDU
 from .swin_unet import SwinUNet
 from .transunet import TransUNet
 from .fpn import FPNUNet, FPNNeck, FPNSegmentationHead
@@ -18,6 +18,7 @@ __all__ = [
     'UNetResNet',
     'DeepLabV3',
     'nnUNet',
+    'DenseContextUNet',
     'GUDU',
     'SwinUNet',
     'TransUNet',

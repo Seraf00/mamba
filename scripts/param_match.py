@@ -37,7 +37,7 @@ MODEL_PAIRS = [
     ('nnunet', 'mamba_nnunet'),
     ('swin_unet', 'mamba_swin_unet'),
     ('transunet', 'mamba_transunet'),
-    ('gudu', 'mamba_gudu'),
+    ('dense_context_unet', 'mamba_dense_context_unet'),
 ]
 
 

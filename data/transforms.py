@@ -1,10 +1,15 @@
 """
 Data augmentation transforms for CAMUS dataset.
 Uses Albumentations library for efficient augmentations.
+
+Includes ultrasound-specific augmentations inspired by the GUDU paper
+(Sfakianakis et al., 2023): probe-origin rotation, perspective transforms,
+and CLAHE contrast enhancement.
 """
 
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+import cv2
 import numpy as np
 from typing import Dict, Optional, Tuple
 
@@ -60,6 +65,56 @@ def compute_dataset_statistics(
     return float(mean), float(std)
 
 
+class ProbeOriginRotation(A.DualTransform):
+    """
+    Rotate image from the ultrasound probe origin (top-center) instead of
+    the image center. This simulates different probe placements during
+    echocardiographic acquisition.
+
+    In CAMUS echocardiography, the sector apex is typically at the top-center
+    of the image. Rotating from this point produces more realistic augmented
+    views than standard center rotation.
+
+    Inspired by the GUDU paper (Sfakianakis et al., 2023).
+
+    Args:
+        limit: Maximum rotation angle in degrees (symmetric around 0).
+        p: Probability of applying the transform.
+    """
+
+    def __init__(self, limit: int = 15, always_apply: bool = False, p: float = 0.5):
+        super().__init__(always_apply=always_apply, p=p)
+        self.limit = limit
+
+    def apply(self, img: np.ndarray, angle: float = 0, **params) -> np.ndarray:
+        h, w = img.shape[:2]
+        # Rotation center at probe origin (top-center of sector scan)
+        center = (w // 2, 0)
+        M = cv2.getRotationMatrix2D(center, angle, 1.0)
+        return cv2.warpAffine(
+            img, M, (w, h),
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0,
+        )
+
+    def apply_to_mask(self, mask: np.ndarray, angle: float = 0, **params) -> np.ndarray:
+        h, w = mask.shape[:2]
+        center = (w // 2, 0)
+        M = cv2.getRotationMatrix2D(center, angle, 1.0)
+        return cv2.warpAffine(
+            mask, M, (w, h),
+            flags=cv2.INTER_NEAREST,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0,
+        )
+
+    def get_params(self) -> dict:
+        return {"angle": np.random.uniform(-self.limit, self.limit)}
+
+    def get_transform_init_args_names(self) -> tuple:
+        return ("limit",)
+
+
 def get_train_transforms(
     img_size: Tuple[int, int] = (256, 256),
     mean: float = 0.5,
@@ -70,7 +125,8 @@ def get_train_transforms(
     
     Includes:
     - Geometric transforms (flip, rotate, scale, shift)
-    - Intensity transforms (brightness, contrast)
+    - Ultrasound-specific: probe-origin rotation, perspective (probe twisting)
+    - Intensity transforms (brightness, contrast, CLAHE)
     - Elastic deformation (common in medical imaging)
     - Grid distortion
     
@@ -95,7 +151,11 @@ def get_train_transforms(
             border_mode=0,  # cv2.BORDER_CONSTANT
             p=0.5
         ),
-        
+
+        # Ultrasound-specific augmentations (inspired by GUDU paper)
+        ProbeOriginRotation(limit=15, p=0.3),
+        A.Perspective(scale=(0.02, 0.05), p=0.3),
+
         # Elastic deformation - important for ultrasound
         A.ElasticTransform(
             alpha=120,
@@ -116,6 +176,9 @@ def get_train_transforms(
             contrast_limit=0.2,
             p=0.5
         ),
+
+        # CLAHE for enhanced tissue contrast (ultrasound-specific)
+        A.CLAHE(clip_limit=4.0, tile_grid_size=(8, 8), p=0.3),
         
         # Gaussian noise
         A.GaussNoise(

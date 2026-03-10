@@ -1,8 +1,11 @@
 """
-GUDU - Global-context U-Net with Dense Skip Connections
+DenseContextUNet - Dense U-Net with Global Context and Dense Skip Connections
 
-U-Net variant with dense skip connections and global context module,
+Custom U-Net variant with dense skip connections and global context module,
 inspired by DenseNet connectivity for better feature reuse.
+
+Note: This is a custom architecture, NOT the GUDU paper (Sfakianakis et al.,
+2023), which describes a data augmentation strategy with an ensemble of U-Nets.
 
 Features:
 - Dense skip connections between encoder and decoder
@@ -241,10 +244,10 @@ class DenseSkipConnection(nn.Module):
         return fused
 
 
-class GUDU(nn.Module):
+class DenseContextUNet(nn.Module):
     """
-    Global-context U-Net with Dense skip connections.
-    
+    Dense U-Net with Global Context and Dense Skip Connections.
+
     Args:
         in_channels: Number of input channels
         num_classes: Number of output classes
@@ -415,27 +418,31 @@ class GUDU(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
 
+# Backward compatibility alias
+GUDU = DenseContextUNet
+
+
 # Convenience functions
-def gudu_small(in_channels: int = 1, num_classes: int = 4) -> GUDU:
-    """Small GUDU model."""
-    return GUDU(in_channels, num_classes, base_features=32, growth_rate=12, depth=4)
+def dense_context_unet_small(in_channels: int = 1, num_classes: int = 4) -> DenseContextUNet:
+    """Small DenseContextUNet model."""
+    return DenseContextUNet(in_channels, num_classes, base_features=32, growth_rate=12, depth=4)
 
 
-def gudu_base(in_channels: int = 1, num_classes: int = 4) -> GUDU:
-    """Standard GUDU model."""
-    return GUDU(in_channels, num_classes, base_features=48, growth_rate=16, depth=4)
+def dense_context_unet_base(in_channels: int = 1, num_classes: int = 4) -> DenseContextUNet:
+    """Standard DenseContextUNet model."""
+    return DenseContextUNet(in_channels, num_classes, base_features=48, growth_rate=16, depth=4)
 
 
-def gudu_large(in_channels: int = 1, num_classes: int = 4) -> GUDU:
-    """Large GUDU model."""
-    return GUDU(in_channels, num_classes, base_features=64, growth_rate=24, depth=5)
+def dense_context_unet_large(in_channels: int = 1, num_classes: int = 4) -> DenseContextUNet:
+    """Large DenseContextUNet model."""
+    return DenseContextUNet(in_channels, num_classes, base_features=64, growth_rate=24, depth=5)
 
 
 if __name__ == '__main__':
     # Test the model
-    model = GUDU(in_channels=1, num_classes=4)
-    print(f"GUDU Parameters: {model.count_parameters():,}")
-    
+    model = DenseContextUNet(in_channels=1, num_classes=4)
+    print(f"DenseContextUNet Parameters: {model.count_parameters():,}")
+
     # Test forward pass
     x = torch.randn(2, 1, 256, 256)
     y = model(x)

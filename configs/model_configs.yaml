@@ -73,9 +73,9 @@ nnunet:
   deep_supervision: True
   instance_norm: True
 
-# GUDU - Gated U-Net with Dense connections
-gudu:
-  name: "GUDU"
+# DenseContextUNet - Dense U-Net with Global Context
+dense_context_unet:
+  name: "DenseContextUNet"
   growth_rate: 32
   num_layers: [4, 4, 4, 4]
   bottleneck_channels: 512
@@ -149,8 +149,8 @@ mamba_nnunet:
   mamba_depths: [2, 2, 2, 2, 2]
   replace_residual: True
 
-mamba_gudu:
-  base: "gudu"
+mamba_dense_context_unet:
+  base: "dense_context_unet"
   mamba_strategy: "full"
   mamba_depths: [2, 2, 2, 2]
   mamba_gate: True

@@ -1,15 +1,16 @@
 """
 nnUNet - Self-Configuring UNet Architecture
 
-Simplified implementation inspired by "nnU-Net: Self-adapting Framework 
+Simplified implementation inspired by "nnU-Net: Self-adapting Framework
 for U-Net-Based Medical Image Segmentation" by Isensee et al., 2021.
 
 Features:
 - Instance normalization (better for varying image intensities)
 - Leaky ReLU activations
-- Residual connections in encoder
 - Deep supervision
 - Configurable based on dataset properties
+- No residual connections by default (per original paper)
+- 2D max feature cap of 512 (per original paper; 3D uses 320)
 """
 
 import torch
@@ -36,10 +37,10 @@ class ConvBlock(nn.Module):
         out_channels: int,
         kernel_size: int = 3,
         stride: int = 1,
-        use_residual: bool = True
+        use_residual: bool = False
     ):
         super().__init__()
-        
+
         self.use_residual = use_residual and (in_channels == out_channels) and (stride == 1)
         
         padding = kernel_size // 2
@@ -105,10 +106,10 @@ class StackedConvBlocks(nn.Module):
         out_channels: int,
         num_blocks: int = 2,
         first_stride: int = 1,
-        use_residual: bool = True
+        use_residual: bool = False
     ):
         super().__init__()
-        
+
         blocks = []
         for i in range(num_blocks):
             blocks.append(
@@ -146,14 +147,14 @@ class nnUNetEncoder(nn.Module):
         num_stages: int = 5,
         features_per_stage: Optional[List[int]] = None,
         blocks_per_stage: Optional[List[int]] = None,
-        use_residual: bool = True
+        use_residual: bool = False
     ):
         super().__init__()
-        
-        # Default features: double each stage up to max
+
+        # Default features: double each stage up to max (512 for 2D per nnU-Net paper)
         if features_per_stage is None:
             features_per_stage = [
-                min(base_features * (2 ** i), 320)
+                min(base_features * (2 ** i), 512)
                 for i in range(num_stages)
             ]
         
@@ -205,7 +206,7 @@ class nnUNetDecoder(nn.Module):
         encoder_features: List[int],
         num_classes: int,
         blocks_per_stage: Optional[List[int]] = None,
-        use_residual: bool = True,
+        use_residual: bool = False,
         deep_supervision: bool = True
     ):
         super().__init__()
@@ -321,11 +322,11 @@ class nnUNet(nn.Module):
         num_stages: int = 5,
         features_per_stage: Optional[List[int]] = None,
         blocks_per_stage: Optional[List[int]] = None,
-        use_residual: bool = True,
+        use_residual: bool = False,
         deep_supervision: bool = True
     ):
         super().__init__()
-        
+
         self.in_channels = in_channels
         self.num_classes = num_classes
         self.deep_supervision = deep_supervision
@@ -416,7 +417,7 @@ def nnunet_base(in_channels: int = 1, num_classes: int = 4) -> nnUNet:
         in_channels, num_classes,
         base_features=32,
         num_stages=5,
-        features_per_stage=[32, 64, 128, 256, 320]
+        features_per_stage=[32, 64, 128, 256, 512]
     )
 
 
@@ -426,7 +427,7 @@ def nnunet_large(in_channels: int = 1, num_classes: int = 4) -> nnUNet:
         in_channels, num_classes,
         base_features=32,
         num_stages=6,
-        features_per_stage=[32, 64, 128, 256, 320, 320]
+        features_per_stage=[32, 64, 128, 256, 512, 512]
     )
 
 
