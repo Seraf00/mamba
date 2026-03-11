@@ -449,7 +449,7 @@ class SwinTransformerBlock(nn.Module):
         if pad_h > 0 or pad_w > 0:
             x = x[:, :H, :W, :]
 
-        x = x.view(B, H * W, C)
+        x = x.reshape(B, H * W, C)
 
         # Residual
         x = shortcut + self.drop_path(x)
@@ -778,12 +778,18 @@ class SwinUNet(nn.Module):
                 pretrained_dict[f'{dst_prefix}.mlp.3.bias']   = src[f'{src_prefix}.mlp.fc2.bias']
 
             # Downsample (PatchMerging) -- last stage has no downsample
+            # NOTE: timm places downsample at the START of the NEXT stage,
+            # whereas our architecture places it at the END of the current stage.
+            # So encoder_stages[i].downsample corresponds to layers.{i+1}.downsample in timm.
             if stage.downsample is not None:
-                src_prefix = f'layers.{i}.downsample'
+                src_prefix = f'layers.{i + 1}.downsample'
                 dst_prefix = f'encoder_stages.{i}.downsample'
-                pretrained_dict[f'{dst_prefix}.reduction.weight'] = src[f'{src_prefix}.reduction.weight']
-                pretrained_dict[f'{dst_prefix}.norm.weight']      = src[f'{src_prefix}.norm.weight']
-                pretrained_dict[f'{dst_prefix}.norm.bias']        = src[f'{src_prefix}.norm.bias']
+                if f'{src_prefix}.reduction.weight' in src:
+                    pretrained_dict[f'{dst_prefix}.reduction.weight'] = src[f'{src_prefix}.reduction.weight']
+                    pretrained_dict[f'{dst_prefix}.norm.weight']      = src[f'{src_prefix}.norm.weight']
+                    pretrained_dict[f'{dst_prefix}.norm.bias']        = src[f'{src_prefix}.norm.bias']
+                else:
+                    print(f"[SwinUNet] WARNING: Downsample keys not found for {src_prefix}, skipping")
 
         # ---- Handle grayscale / non-RGB input channels ----
         if in_channels != 3:

@@ -89,6 +89,12 @@ def get_model_training_overrides(model_name: str) -> Dict[str, Any]:
         overrides['scheduler'] = 'warmup_cosine'
         overrides['warmup_epochs'] = 5
 
+    # Small dense models — need warmup + gradient clipping to avoid loss explosion
+    elif model_name in ('dense_context_unet', 'mamba_dense_context_unet'):
+        overrides['scheduler'] = 'warmup_cosine'
+        overrides['warmup_epochs'] = 10
+        overrides['max_grad_norm'] = 1.0
+
     return overrides
 
 
@@ -491,6 +497,7 @@ def train_single_model(
         device=str(device),
         use_amp=args.mixed_precision,
         num_workers=args.num_workers,
+        max_grad_norm=model_overrides.get('max_grad_norm', 0.0),
     )
     
     # Callbacks
@@ -661,6 +668,7 @@ def train_single_model_cv(
             warmup_epochs=model_overrides.get('warmup_epochs', 5),
             save_dir=str(fold_dir), device=str(device),
             use_amp=args.mixed_precision, num_workers=args.num_workers,
+            max_grad_norm=model_overrides.get('max_grad_norm', 0.0),
         )
 
         callbacks = [

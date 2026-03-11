@@ -55,6 +55,9 @@ class TrainingConfig:
     # Gradient accumulation
     gradient_accumulation_steps: int = 1
 
+    # Gradient clipping (0 = disabled)
+    max_grad_norm: float = 0.0
+
 
 class Trainer:
     """
@@ -335,6 +338,11 @@ class Trainer:
                 self.scaler.scale(loss).backward()
 
                 if (batch_idx + 1) % accum_steps == 0 or (batch_idx + 1) == len(self.train_loader):
+                    self.scaler.unscale_(self.optimizer)
+                    if self.config.max_grad_norm > 0:
+                        torch.nn.utils.clip_grad_norm_(
+                            self.model.parameters(), self.config.max_grad_norm
+                        )
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
                     self.optimizer.zero_grad()
@@ -347,6 +355,10 @@ class Trainer:
                 loss.backward()
 
                 if (batch_idx + 1) % accum_steps == 0 or (batch_idx + 1) == len(self.train_loader):
+                    if self.config.max_grad_norm > 0:
+                        torch.nn.utils.clip_grad_norm_(
+                            self.model.parameters(), self.config.max_grad_norm
+                        )
                     self.optimizer.step()
                     self.optimizer.zero_grad()
 

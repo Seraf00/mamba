@@ -382,9 +382,10 @@ class TransUNet(nn.Module):
         self._init_decoder()
 
         # ---------------------------------------------------------------
-        # Fix 5: Load pretrained ViT-B/16 weights from timm
+        # Fix 5: Load pretrained weights from timm
         # ---------------------------------------------------------------
         if pretrained:
+            self._load_pretrained_resnet()
             self._load_pretrained_vit()
 
     def _init_decoder(self):
@@ -403,6 +404,99 @@ class TransUNet(nn.Module):
                     nn.init.trunc_normal_(m.weight, std=0.02)
                     if m.bias is not None:
                         nn.init.constant_(m.bias, 0)
+
+    def _load_pretrained_resnet(self):
+        """
+        Load pretrained ResNetV2 (BiT) encoder weights from timm (ImageNet-21k).
+
+        Maps timm's resnetv2_50x1_bit.goog_in21k weights to our ResNetV2Encoder.
+
+        Key mapping:
+          timm:  stem.conv.weight           -> ours: encoder.conv1.weight
+          timm:  stages.{s}.blocks.{b}.norm{n}  -> ours: encoder.layer{s+1}.{b}.gn{n}
+          timm:  stages.{s}.blocks.{b}.conv{n}  -> ours: encoder.layer{s+1}.{b}.conv{n}
+          timm:  stages.{s}.blocks.{b}.downsample.conv -> ours: encoder.layer{s+1}.{b}.downsample
+
+        Our encoder has layers=(3,4,9), timm's ResNet50 has stages=[3,4,6,3].
+        We load stages 0-1 fully, stage 2 partially (6/9 blocks), skip stage 3.
+        Handles grayscale input by averaging RGB stem conv weights.
+        """
+        try:
+            import timm
+        except ImportError:
+            print(
+                "[TransUNet] WARNING: timm is not installed. "
+                "Pretrained ResNetV2 weights will NOT be loaded. "
+                "Install with: pip install timm"
+            )
+            return
+
+        print("[TransUNet] Loading pretrained ResNetV2 (BiT) encoder weights from timm (ImageNet-21k)...")
+
+        # Create pretrained timm BiT model to extract weights
+        timm_model = timm.create_model('resnetv2_50x1_bit.goog_in21k', pretrained=True)
+        timm_state = timm_model.state_dict()
+
+        mapped = {}
+
+        # ---- Stem ----
+        stem_weight = timm_state['stem.conv.weight']  # [64, 3, 7, 7]
+        if self.in_channels != 3:
+            # Average RGB weights to grayscale
+            stem_weight = stem_weight.mean(dim=1, keepdim=True)  # [64, 1, 7, 7]
+            if self.in_channels > 1:
+                stem_weight = stem_weight.repeat(1, self.in_channels, 1, 1)
+        mapped['encoder.conv1.weight'] = stem_weight
+        # Note: timm BiT has no stem norm; our encoder.gn1 stays randomly initialized
+
+        # ---- Stages ----
+        # timm stages: [3, 4, 6, 3] blocks -> our layers: [3, 4, 9] blocks
+        # Load stages 0-1 fully, stage 2 partially (first 6 of 9 blocks)
+        timm_block_counts = [3, 4, 6]  # How many blocks we can load per our stage
+        our_layer_names = ['layer1', 'layer2', 'layer3']
+
+        for s, (layer_name, n_load) in enumerate(zip(our_layer_names, timm_block_counts)):
+            for b in range(n_load):
+                src_prefix = f'stages.{s}.blocks.{b}'
+                dst_prefix = f'encoder.{layer_name}.{b}'
+
+                # norm1/2/3 (GroupNorm) -> gn1/2/3
+                for n in [1, 2, 3]:
+                    src_key_w = f'{src_prefix}.norm{n}.weight'
+                    src_key_b = f'{src_prefix}.norm{n}.bias'
+                    if src_key_w in timm_state:
+                        mapped[f'{dst_prefix}.gn{n}.weight'] = timm_state[src_key_w]
+                        mapped[f'{dst_prefix}.gn{n}.bias'] = timm_state[src_key_b]
+
+                # conv1/2/3 (StdConv2d)
+                for n in [1, 2, 3]:
+                    src_key = f'{src_prefix}.conv{n}.weight'
+                    if src_key in timm_state:
+                        mapped[f'{dst_prefix}.conv{n}.weight'] = timm_state[src_key]
+
+                # downsample projection (only in block 0 of each stage)
+                ds_key = f'{src_prefix}.downsample.conv.weight'
+                if ds_key in timm_state:
+                    mapped[f'{dst_prefix}.downsample.weight'] = timm_state[ds_key]
+
+        # ---- Load mapped weights ----
+        load_result = self.load_state_dict(mapped, strict=False)
+
+        loaded_count = len(mapped)
+        missing = [k for k in load_result.missing_keys if 'encoder.' in k]
+        print(f"[TransUNet] Loaded {loaded_count} weight tensors from pretrained ResNetV2 (BiT).")
+        if missing:
+            print(f"[TransUNet]   Encoder keys not loaded (randomly init): {len(missing)} keys")
+            # Show which layers weren't loaded
+            unloaded_layers = set()
+            for k in missing:
+                parts = k.split('.')
+                if len(parts) >= 3:
+                    unloaded_layers.add('.'.join(parts[:3]))
+            if unloaded_layers:
+                print(f"[TransUNet]   Unloaded encoder sub-modules: {sorted(unloaded_layers)}")
+
+        del timm_model, timm_state
 
     def _load_pretrained_vit(self):
         """
