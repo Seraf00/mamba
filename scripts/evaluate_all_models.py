@@ -145,18 +145,25 @@ def evaluate_model(
     per_class: bool = True,
     compute_ef: bool = False
 ) -> Dict[str, Any]:
-    """Evaluate a single model."""
+    """
+    Evaluate a single model, with per-sample pixel spacing and ED/ES separation.
+
+    Computes:
+      - Per-class Dice / IoU (overall + ED + ES slices)
+      - Per-class HD95 and ASSD in mm (using per-sample NIfTI spacing)
+      - Per-sample Dice for bootstrap CI and Wilcoxon tests
+    """
     model_name = model_config['name']
     mamba_type = model_config['mamba_type']
     checkpoint_path = model_config['checkpoint']
-    
+
     # Create model
     model_kwargs = {'in_channels': 1, 'num_classes': 4}
     if mamba_type:
         model_kwargs['mamba_type'] = mamba_type
-    
+
     model = get_model(model_name, **model_kwargs)
-    
+
     # Load checkpoint
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     if 'model_state_dict' in checkpoint:
@@ -165,56 +172,103 @@ def evaluate_model(
         model.load_state_dict(checkpoint['state_dict'])
     else:
         model.load_state_dict(checkpoint)
-    
+
     model = model.to(device)
     model.eval()
-    
-    # Metrics
-    metrics = SegmentationMetrics(num_classes=4, per_class=per_class)
-    
-    # Collect predictions
-    all_preds = []
-    all_targets = []
-    all_images = []
-    
+
+    # Separate metric accumulators for overall / ED / ES
+    metrics_overall = SegmentationMetrics(num_classes=4)
+    metrics_ed = SegmentationMetrics(num_classes=4)
+    metrics_es = SegmentationMetrics(num_classes=4)
+
+    # Collect per-sample predictions for stats + EF downstream
+    all_preds: List[np.ndarray] = []
+    all_targets: List[np.ndarray] = []
+
     with torch.no_grad():
-        for images, masks in tqdm(dataloader, desc=f"Evaluating {model_config['display_name']}", leave=False):
-            images = images.to(device)
-            masks = masks.to(device)
-            
+        for batch in tqdm(dataloader, desc=f"Evaluating {model_config['display_name']}", leave=False):
+            # Batch is a dict when include_info=True via _eval_collate_fn
+            images = batch['image'].to(device)
+            masks = batch['mask'].to(device)
+            phases: List[str] = batch['phase']
+            spacings: List[Tuple[float, float]] = batch['pixel_spacing']
+
             outputs = model(images)
             if isinstance(outputs, dict):
                 outputs = outputs['out']
-            
+
             preds = outputs.argmax(dim=1)
-            metrics.update(preds, masks)
-            
+
+            # Overall metrics with per-sample spacing
+            metrics_overall.update(preds, masks, spacing=spacings)
+
+            # Phase-stratified metrics
+            ed_indices = [i for i, p in enumerate(phases) if p == 'ED']
+            es_indices = [i for i, p in enumerate(phases) if p == 'ES']
+
+            if ed_indices:
+                ed_spacings = [spacings[i] for i in ed_indices]
+                metrics_ed.update(
+                    preds[ed_indices], masks[ed_indices], spacing=ed_spacings
+                )
+            if es_indices:
+                es_spacings = [spacings[i] for i in es_indices]
+                metrics_es.update(
+                    preds[es_indices], masks[es_indices], spacing=es_spacings
+                )
+
             all_preds.append(preds.cpu().numpy())
             all_targets.append(masks.cpu().numpy())
-            all_images.append(images.cpu().numpy())
-    
-    # Compute metrics
-    results = metrics.compute()
-    
-    # Stack predictions
-    all_preds = np.concatenate(all_preds, axis=0)
-    all_targets = np.concatenate(all_targets, axis=0)
-    
-    # Compute per-sample Dice for statistical analysis
-    per_sample_dice = compute_per_sample_dice(all_preds, all_targets)
+
+    # Aggregate
+    results = metrics_overall.compute()
+
+    # Attach ED / ES slices with suffixes
+    results_ed = metrics_ed.compute()
+    for k, v in results_ed.items():
+        results[f'{k}_ed'] = v
+
+    results_es = metrics_es.compute()
+    for k, v in results_es.items():
+        results[f'{k}_es'] = v
+
+    # Stack predictions for per-sample stats
+    all_preds_np = np.concatenate(all_preds, axis=0)
+    all_targets_np = np.concatenate(all_targets, axis=0)
+
+    per_sample_dice = compute_per_sample_dice(all_preds_np, all_targets_np)
     results['per_sample_dice'] = per_sample_dice.tolist()
     results['dice_std'] = float(np.std(per_sample_dice))
 
-    # Bootstrap 95% confidence interval
-    mean_dice, ci_lower, ci_upper = bootstrap_confidence_interval(per_sample_dice)
+    # Bootstrap 95% confidence interval on mean Dice
+    _, ci_lower, ci_upper = bootstrap_confidence_interval(per_sample_dice)
     results['dice_ci_lower'] = ci_lower
     results['dice_ci_upper'] = ci_upper
-    
+
     # Clean up
     del model
     torch.cuda.empty_cache()
-    
+
     return results
+
+
+def _eval_collate_fn(batch: List[Dict]) -> Dict:
+    """
+    Collate function for evaluation that preserves per-sample pixel spacing
+    and ED/ES phase labels. We cannot use the default collate because
+    pixel_spacing is a per-sample tuple, and phase is a per-sample string.
+    """
+    images = torch.stack([item['image'] for item in batch])
+    masks = torch.stack([item['mask'] for item in batch])
+
+    return {
+        'image': images,
+        'mask': masks,
+        'patient_id': [item['patient_id'] for item in batch],
+        'view': [item['view'] for item in batch],
+        'phase': [item['phase'] for item in batch],
+        'pixel_spacing': [tuple(item['pixel_spacing']) for item in batch],
+    }
 
 
 def compute_per_sample_dice(preds: np.ndarray, targets: np.ndarray) -> np.ndarray:
@@ -411,52 +465,69 @@ def statistical_comparison(results: Dict[str, Dict]) -> Dict[str, Any]:
 
 
 def create_latex_table(results: Dict[str, Dict], output_path: Path):
-    """Create LaTeX table for paper."""
-    # Define class names
-    classes = ['LV Endo', 'LV Epi', 'LA']
-    
+    """
+    Create LaTeX table for paper (CAMUS leaderboard format):
+    per-class Dice, per-class HD95 (mm), EF MAE, EF correlation.
+    """
     lines = [
-        r"\begin{table}[htbp]",
+        r"\begin{table*}[htbp]",
         r"\centering",
-        r"\caption{Segmentation performance on CAMUS test set.}",
+        r"\caption{Segmentation and clinical performance on CAMUS. "
+        r"Dice reported per cardiac structure (LV\textsubscript{endo}, "
+        r"LV\textsubscript{epi}, LA); HD95 and ASSD in mm; EF MAE (\%) and "
+        r"EF Pearson correlation.}",
         r"\label{tab:results}",
-        r"\begin{tabular}{lcccccc}",
+        r"\begin{tabular}{lcccccccc}",
         r"\toprule",
-        r"Model & " + " & ".join([f"Dice ({c})" for c in classes]) + r" & Mean Dice & Params (M) \\",
+        r"Model & Dice LV$_{\text{endo}}$ & Dice LV$_{\text{epi}}$ & Dice LA "
+        r"& Mean Dice & HD95 (mm) & ASSD (mm) & EF MAE (\%) & EF $r$ \\",
         r"\midrule",
     ]
-    
-    for model_name, metrics in sorted(results.items()):
+
+    def _sort_key(item):
+        res = item[1]
+        if 'error' in res:
+            return 999.0
+        return -res.get('dice_mean', 0)
+
+    for model_name, metrics in sorted(results.items(), key=_sort_key):
         if 'error' in metrics:
             continue
-        
-        # Get per-class Dice
-        dice_per_class = metrics.get('dice_per_class', [0, 0, 0])
-        if isinstance(dice_per_class, dict):
-            dice_per_class = [dice_per_class.get(f'class_{i}', 0) for i in range(1, 4)]
-        
-        mean_dice = metrics.get('mean_dice', metrics.get('dice', 0))
-        params = metrics.get('params_M', 'N/A')
-        
-        # Format values
-        dice_strs = [f"{d:.3f}" for d in dice_per_class[:3]]
-        mean_str = f"{mean_dice:.3f}"
-        params_str = f"{params:.2f}" if isinstance(params, (int, float)) else str(params)
-        
-        # Create row
+
+        lv_endo = metrics.get('dice_lv_endocardium', 0)
+        lv_epi = metrics.get('dice_lv_epicardium', 0)
+        la = metrics.get('dice_left_atrium', 0)
+        mean_dice = metrics.get('dice_mean', 0)
+        hd95 = metrics.get('hd95_mean', float('nan'))
+        assd = metrics.get('assd_mean', float('nan'))
+
+        ef_metrics = metrics.get('ef_metrics', {}) or {}
+        ef_mae = ef_metrics.get('ef_mae', float('nan'))
+        ef_r = ef_metrics.get('ef_correlation', float('nan'))
+
+        def _fmt(x, fmt=".3f"):
+            if isinstance(x, float) and (x != x):  # NaN check
+                return '--'
+            return format(x, fmt)
+
         display_name = model_name.replace('_', r'\_')
-        row = f"{display_name} & " + " & ".join(dice_strs) + f" & {mean_str} & {params_str} \\\\"
+        row = (
+            f"{display_name} & "
+            f"{_fmt(lv_endo)} & {_fmt(lv_epi)} & {_fmt(la)} & {_fmt(mean_dice)} & "
+            f"{_fmt(hd95, '.2f')} & {_fmt(assd, '.2f')} & "
+            f"{_fmt(ef_mae, '.2f')} & {_fmt(ef_r, '.3f')} \\\\"
+        )
         lines.append(row)
-    
+
     lines.extend([
         r"\bottomrule",
         r"\end{tabular}",
-        r"\end{table}",
+        r"\end{table*}",
     ])
-    
+
     with open(output_path, 'w') as f:
         f.write('\n'.join(lines))
-    
+
     print(f"LaTeX table saved to: {output_path}")
 
 
@@ -499,21 +570,24 @@ def main():
         
         # Get appropriate image size
         img_size = get_img_size(model_config['name'])
-        
-        # Create dataset
-        transform = get_transforms(split='val', img_size=img_size)
+
+        # Create dataset with include_info=True so we get pixel spacing and phase
+        # (required for HD95 in mm and ED/ES stratified reporting).
+        transform = get_transforms(split='val', img_size=(img_size, img_size))
         dataset = CAMUSDataset(
             root_dir=args.data_dir,
             split=args.split,
-            transform=transform
+            transform=transform,
+            include_info=True,
         )
-        
+
         dataloader = DataLoader(
             dataset,
             batch_size=args.batch_size,
             shuffle=False,
             num_workers=args.num_workers,
-            pin_memory=True
+            pin_memory=True,
+            collate_fn=_eval_collate_fn,
         )
         
         try:
@@ -569,13 +643,27 @@ def main():
             all_results[display_name] = results
 
             # Print results
-            print(f"\n  Mean Dice: {results.get('mean_dice', results.get('dice', 0)):.4f} ± {results.get('dice_std', 0):.4f}")
-            if 'dice_per_class' in results:
-                print(f"  Per-class Dice: {results['dice_per_class']}")
-            if 'iou' in results:
-                print(f"  Mean IoU: {results['iou']:.4f}")
-            if 'hd95' in results:
-                print(f"  HD95: {results['hd95']:.2f}")
+            dice_mean = results.get('dice_mean', 0)
+            dice_std = results.get('dice_std', 0)
+            print(f"\n  Mean Dice: {dice_mean:.4f} +/- {dice_std:.4f}")
+
+            # Per-class Dice (new keys from SegmentationMetrics)
+            for cls_key in ('lv_endocardium', 'lv_epicardium', 'left_atrium'):
+                if f'dice_{cls_key}' in results:
+                    name = cls_key.replace('_', ' ').title()
+                    print(f"    Dice ({name}): {results[f'dice_{cls_key}']:.4f}")
+
+            if 'iou_mean' in results:
+                print(f"  Mean IoU: {results['iou_mean']:.4f}")
+            if 'hd95_mean' in results:
+                print(f"  HD95 (mean, mm): {results['hd95_mean']:.2f}")
+            if 'assd_mean' in results:
+                print(f"  ASSD (mean, mm): {results['assd_mean']:.2f}")
+            if 'hd95_mean_ed' in results and 'hd95_mean_es' in results:
+                print(
+                    f"  HD95 ED/ES (mm): {results['hd95_mean_ed']:.2f} / "
+                    f"{results['hd95_mean_es']:.2f}"
+                )
 
         except Exception as e:
             print(f"  Error: {e}")
@@ -624,26 +712,49 @@ def main():
     # Create CSV
     create_csv(all_results, output_dir / 'results.csv')
     
-    # Print summary table
-    print("\n" + "="*90)
+    # Print summary table with per-class Dice + HD95 for leaderboard comparison
+    print("\n" + "=" * 120)
     print("RESULTS SUMMARY")
-    print("="*90)
-    print(f"\n{'Model':<35} {'Mean Dice':>12} {'Std':>8} {'IoU':>10} {'Params (M)':>12}")
-    print("-"*90)
-    
-    for name, res in sorted(all_results.items(), key=lambda x: -x[1].get('mean_dice', x[1].get('dice', 0)) if 'error' not in x[1] else -999):
+    print("=" * 120)
+    header = (
+        f"{'Model':<30} "
+        f"{'Dice':>8} {'LV_endo':>9} {'LV_epi':>9} {'LA':>7} "
+        f"{'HD95':>8} {'EF MAE':>8} {'EF r':>7} {'Params':>9}"
+    )
+    print("\n" + header)
+    print("-" * 120)
+
+    def _sort_key(item):
+        res = item[1]
         if 'error' in res:
-            print(f"{name:<35} {'ERROR':>12}")
-        else:
-            dice = res.get('mean_dice', res.get('dice', 0))
-            std = res.get('dice_std', 0)
-            iou = res.get('iou', 0)
-            params = res.get('params_M', 'N/A')
-            params_str = f"{params:.2f}" if isinstance(params, (int, float)) else str(params)
-            print(f"{name:<35} {dice:>12.4f} {std:>8.4f} {iou:>10.4f} {params_str:>12}")
-    
-    print("-"*90)
-    print(f"\n✅ Results saved to: {output_dir}")
+            return 999.0
+        return -res.get('dice_mean', 0)
+
+    for name, res in sorted(all_results.items(), key=_sort_key):
+        if 'error' in res:
+            print(f"{name:<30} ERROR ({res.get('error', '')[:80]})")
+            continue
+
+        dice = res.get('dice_mean', 0)
+        lv_endo = res.get('dice_lv_endocardium', 0)
+        lv_epi = res.get('dice_lv_epicardium', 0)
+        la = res.get('dice_left_atrium', 0)
+        hd95 = res.get('hd95_mean', float('nan'))
+        params = res.get('params_M', 'N/A')
+        params_str = f"{params:.1f}M" if isinstance(params, (int, float)) else str(params)
+
+        ef_metrics = res.get('ef_metrics', {}) or {}
+        ef_mae = ef_metrics.get('ef_mae', float('nan'))
+        ef_r = ef_metrics.get('ef_correlation', float('nan'))
+
+        print(
+            f"{name:<30} "
+            f"{dice:>8.4f} {lv_endo:>9.4f} {lv_epi:>9.4f} {la:>7.4f} "
+            f"{hd95:>8.2f} {ef_mae:>8.2f} {ef_r:>7.3f} {params_str:>9}"
+        )
+
+    print("-" * 120)
+    print(f"\nResults saved to: {output_dir}")
 
 
 def create_csv(results: Dict[str, Dict], output_path: Path):

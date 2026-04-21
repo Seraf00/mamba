@@ -363,17 +363,19 @@ class SurfaceDistance:
 class SegmentationMetrics:
     """
     Comprehensive segmentation metrics calculator.
-    
-    Combines all metrics for easy evaluation.
+
+    Combines all metrics for easy evaluation. Supports per-sample pixel
+    spacing and per-class boundary metrics (HD95, ASSD) for leaderboard-
+    compatible evaluation.
     """
-    
+
     CLASS_NAMES = {
         0: 'Background',
         1: 'LV Endocardium',
         2: 'LV Epicardium',
         3: 'Left Atrium'
     }
-    
+
     def __init__(
         self,
         num_classes: int = 4,
@@ -383,83 +385,138 @@ class SegmentationMetrics:
         self.num_classes = num_classes
         self.spacing = spacing
         self.ignore_background = ignore_background
-        
+
         self.dice = DiceScore(ignore_index=0 if ignore_background else None)
         self.iou = IoUScore(ignore_index=0 if ignore_background else None)
+        # Default HD/ASD instances; per-sample spacing overrides this.
         self.hausdorff = HausdorffDistance(percentile=95, spacing=spacing)
         self.surface_distance = SurfaceDistance(spacing=spacing)
-        
+
         self.reset()
-    
+
     def reset(self):
         """Reset accumulated metrics."""
         self.dice_scores = []
         self.iou_scores = []
-        self.hd_scores = []
-        self.asd_scores = []
-    
+        # Per-class, per-sample HD95 and ASSD (indexed 1..num_classes-1)
+        self.per_class_hd: Dict[int, List[float]] = {c: [] for c in range(1, self.num_classes)}
+        self.per_class_asd: Dict[int, List[float]] = {c: [] for c in range(1, self.num_classes)}
+
     def update(
         self,
         pred: torch.Tensor,
-        target: torch.Tensor
+        target: torch.Tensor,
+        spacing: Optional[Union[Tuple[float, float], List[Tuple[float, float]]]] = None
     ):
         """
         Update metrics with new predictions.
-        
+
         Args:
             pred: Predictions (B, C, H, W) or (B, H, W)
             target: Ground truth (B, H, W)
+            spacing: Optional pixel spacing. Can be:
+                - None: uses self.spacing (default)
+                - Tuple[float, float]: single spacing for whole batch
+                - List[Tuple]: per-sample spacing (must match batch size)
         """
-        # Dice and IoU
+        # Dice and IoU (spacing-independent)
         dice = self.dice(pred, target, return_per_class=True)
         iou = self.iou(pred, target, return_per_class=True)
-        
+
         self.dice_scores.append(dice['per_class'])
         self.iou_scores.append(iou['per_class'])
-        
-        # Hausdorff and ASD (more expensive)
+
+        # Hausdorff and ASD (more expensive, per-sample to allow per-sample spacing)
         if pred.dim() == 4:
             pred = pred.argmax(dim=1)
-        
-        hd = self.hausdorff(pred, target)
-        asd = self.surface_distance(pred, target)
-        
-        self.hd_scores.append(hd)
-        self.asd_scores.append(asd)
-    
+
+        # Normalise spacing into a per-sample list
+        batch_size = pred.shape[0]
+        if spacing is None:
+            spacings = [self.spacing] * batch_size
+        elif isinstance(spacing, (tuple, list)) and len(spacing) == 2 and all(
+            isinstance(v, (int, float)) for v in spacing
+        ):
+            spacings = [tuple(spacing)] * batch_size
+        else:
+            assert len(spacing) == batch_size, (
+                f"Spacing list length {len(spacing)} != batch size {batch_size}"
+            )
+            spacings = [tuple(s) for s in spacing]
+
+        # Compute per-sample, per-class HD95 and ASSD
+        for b in range(batch_size):
+            s = spacings[b]
+            hd_metric = HausdorffDistance(percentile=95, spacing=s)
+            asd_metric = SurfaceDistance(spacing=s)
+
+            for c in range(1, self.num_classes):
+                # HD95 for this sample / class
+                hd_result = hd_metric(pred[b:b + 1], target[b:b + 1], class_idx=c)
+                hd_key = f'class_{c}_hd'
+                if hd_key in hd_result and np.isfinite(hd_result[hd_key]):
+                    self.per_class_hd[c].append(float(hd_result[hd_key]))
+
+                # ASSD for this sample / class
+                asd_result = asd_metric(pred[b:b + 1], target[b:b + 1], class_idx=c)
+                asd_key = f'class_{c}_asd'
+                if asd_key in asd_result and np.isfinite(asd_result[asd_key]):
+                    self.per_class_asd[c].append(float(asd_result[asd_key]))
+
     def compute(self) -> Dict[str, float]:
-        """Compute final metrics."""
-        results = {}
-        
-        # Dice
+        """Compute final metrics, including per-class breakdowns."""
+        results: Dict[str, float] = {}
+
+        # Dice (per-class and mean)
         if self.dice_scores:
             dice_tensor = torch.cat(self.dice_scores, dim=0)
             results['dice_mean'] = dice_tensor.mean().item()
-            
+
             for c in range(dice_tensor.shape[1]):
-                class_name = self.CLASS_NAMES.get(c + 1, f'Class_{c + 1}')
-                results[f'dice_{class_name.lower().replace(" ", "_")}'] = dice_tensor[:, c].mean().item()
-        
-        # IoU
+                # If background is ignored in DiceScore, channel index c corresponds
+                # to class (c + 1) in the original label space.
+                label_idx = c + 1 if self.ignore_background else c
+                class_name = self.CLASS_NAMES.get(label_idx, f'Class_{label_idx}')
+                key = class_name.lower().replace(' ', '_')
+                results[f'dice_{key}'] = dice_tensor[:, c].mean().item()
+
+        # IoU (per-class and mean)
         if self.iou_scores:
             iou_tensor = torch.cat(self.iou_scores, dim=0)
             results['iou_mean'] = iou_tensor.mean().item()
-            
+
             for c in range(iou_tensor.shape[1]):
-                class_name = self.CLASS_NAMES.get(c + 1, f'Class_{c + 1}')
-                results[f'iou_{class_name.lower().replace(" ", "_")}'] = iou_tensor[:, c].mean().item()
-        
-        # HD and ASD
-        if self.hd_scores:
-            hd_values = [s.get('mean_hd', 0) for s in self.hd_scores if 'mean_hd' in s]
-            if hd_values:
-                results['hd95_mean'] = np.mean(hd_values)
-        
-        if self.asd_scores:
-            asd_values = [s.get('mean_asd', 0) for s in self.asd_scores if 'mean_asd' in s]
-            if asd_values:
-                results['asd_mean'] = np.mean(asd_values)
-        
+                label_idx = c + 1 if self.ignore_background else c
+                class_name = self.CLASS_NAMES.get(label_idx, f'Class_{label_idx}')
+                key = class_name.lower().replace(' ', '_')
+                results[f'iou_{key}'] = iou_tensor[:, c].mean().item()
+
+        # HD95 (per-class and mean, in mm)
+        hd_means = []
+        for c in range(1, self.num_classes):
+            values = self.per_class_hd.get(c, [])
+            if values:
+                class_name = self.CLASS_NAMES.get(c, f'Class_{c}')
+                key = class_name.lower().replace(' ', '_')
+                mean_val = float(np.mean(values))
+                results[f'hd95_{key}'] = mean_val
+                hd_means.append(mean_val)
+        if hd_means:
+            results['hd95_mean'] = float(np.mean(hd_means))
+
+        # ASSD (per-class and mean, in mm)
+        asd_means = []
+        for c in range(1, self.num_classes):
+            values = self.per_class_asd.get(c, [])
+            if values:
+                class_name = self.CLASS_NAMES.get(c, f'Class_{c}')
+                key = class_name.lower().replace(' ', '_')
+                mean_val = float(np.mean(values))
+                results[f'assd_{key}'] = mean_val
+                asd_means.append(mean_val)
+        if asd_means:
+            results['assd_mean'] = float(np.mean(asd_means))
+
         return results
     
     def __str__(self) -> str:
