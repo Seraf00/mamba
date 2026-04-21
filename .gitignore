@@ -8,3 +8,34 @@
 
 # ignore the dataset
 data/CAMUS/
+
+# Claude Code per-user session state (not shared across developers)
+.claude/
+
+# Experiment outputs: large checkpoints, logs, per-run results
+# Keep the results/ folder structure local but do not commit artefacts
+results/
+checkpoints/
+wandb/
+*.pth
+*.pt
+*.ckpt
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# LaTeX build artefacts (papers/ source files ARE tracked, build output is not)
+papers/**/*.aux
+papers/**/*.log
+papers/**/*.out
+papers/**/*.toc
+papers/**/*.bbl
+papers/**/*.blg
+papers/**/*.synctex.gz
+papers/**/*.fls
+papers/**/*.fdb_latexmk
+papers/**/_minted*/
