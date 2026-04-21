@@ -462,18 +462,23 @@ class Mamba2Block(nn.Module):
     def __init__(
         self,
         dim: int,
-        d_state: int = 64,
+        d_state: int = 32,           # Reduced from 64 to fit Triton shared memory on T4/L4
         d_conv: int = 4,
         expand: int = 2,
         n_heads: Optional[int] = None,  # Auto-compute if None
         head_dim: Optional[int] = None,
-        chunk_size: int = 256,
+        chunk_size: int = 128,        # Reduced from 256 to fit Triton shared memory
         bias: bool = False,
         conv_bias: bool = True,
         use_fast_path: bool = True,
     ):
+        # NOTE: Defaults d_state=32 + chunk_size=128 chosen so that the Triton
+        # SSD backward kernel (_chunk_state_bwd_db_kernel) fits within the
+        # ~100 KB shared-memory limit of Colab T4/L4 GPUs even on large models
+        # (dim > 512 at bottleneck). Paper defaults (d_state=64, chunk_size=256)
+        # cause OOM for models > ~60M parameters.
         super().__init__()
-        
+
         self.dim = dim
         self.d_state = d_state
         self.d_conv = d_conv
@@ -756,7 +761,7 @@ class Mamba2Layer(nn.Module):
     def __init__(
         self,
         dim: int,
-        d_state: int = 64,
+        d_state: int = 32,           # Reduced from 64 to fit Triton shared memory
         d_conv: int = 4,
         expand: int = 2,
         n_heads: int = 8,
@@ -764,7 +769,7 @@ class Mamba2Layer(nn.Module):
         **kwargs
     ):
         super().__init__()
-        
+
         self.norm = nn.LayerNorm(dim)
         self.mamba2 = Mamba2Block(
             dim=dim,

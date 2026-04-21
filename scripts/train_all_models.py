@@ -71,23 +71,28 @@ def get_model_training_overrides(model_name: str) -> Dict[str, Any]:
     """
     overrides = {}
 
-    # Pure transformer models — need warmup + slightly higher LR
+    # Pure transformer models — need warmup + lower LR + grad clipping
+    # (prior 5e-4 caused NaN divergence at epoch ~9-13 across all SSM variants)
     if model_name in ('swin_unet', 'mamba_swin_unet'):
         overrides['scheduler'] = 'warmup_cosine'
-        overrides['warmup_epochs'] = 15
-        overrides['learning_rate'] = 5e-4
+        overrides['warmup_epochs'] = 10
+        overrides['learning_rate'] = 1e-4
+        overrides['max_grad_norm'] = 1.0
 
-    # Hybrid transformer models — need warmup
+    # Hybrid transformer models — need warmup + grad clipping
     elif model_name in ('transunet', 'mamba_transunet'):
         overrides['scheduler'] = 'warmup_cosine'
         overrides['warmup_epochs'] = 10
+        overrides['max_grad_norm'] = 1.0
 
-    # Pretrained backbone models — short warmup for stable fine-tuning
+    # Pretrained backbone models — short warmup + grad clip for stable fine-tuning
+    # (grad clipping helps Mamba variants with pretrained encoders, e.g. VMamba UNet-ResNet)
     elif model_name in ('deeplab_v3', 'mamba_deeplab',
                          'unet_resnet', 'mamba_unet_resnet',
                          'fpn', 'mamba_fpn'):
         overrides['scheduler'] = 'warmup_cosine'
         overrides['warmup_epochs'] = 5
+        overrides['max_grad_norm'] = 1.0
 
     # Small dense models — need warmup + gradient clipping to avoid loss explosion
     elif model_name in ('dense_context_unet', 'mamba_dense_context_unet'):
@@ -180,6 +185,16 @@ MAMBA_VARIANTS = ['mamba', 'mamba2', 'vmamba']
 
 # Models requiring specific input sizes
 SWIN_MODELS = ['swin_unet', 'mamba_swin_unet']  # Require 224x224
+
+# Model + Mamba-variant combinations that are architecturally incompatible
+# and should be skipped during training. Reason documented for paper.
+INCOMPATIBLE_COMBINATIONS = {
+    # VMamba's 4-directional cross-scan combined with DenseContextUNet's dense
+    # skip concatenations produces a >12 GiB activation spike in the SSM backward
+    # pass, exceeding single-GPU memory even at batch size 4. Reported as an
+    # architectural limitation rather than retried with reduced capacity.
+    ('mamba_dense_context_unet', 'vmamba'),
+}
 
 
 def parse_args():
@@ -308,8 +323,14 @@ def get_models_to_train(args) -> List[Dict[str, Any]]:
             extra_kwargs['base_features'] = args.base_features
 
         if model_name in MAMBA_MODELS:
-            # Add each Mamba variant
+            # Add each Mamba variant, skipping architecturally incompatible combos
             for mamba_type in args.mamba_variants:
+                if (model_name, mamba_type) in INCOMPATIBLE_COMBINATIONS:
+                    print(
+                        f"[SKIP] {model_name} + {mamba_type}: architecturally "
+                        f"incompatible (see INCOMPATIBLE_COMBINATIONS)."
+                    )
+                    continue
                 models.append({
                     'name': model_name,
                     'mamba_type': mamba_type,
