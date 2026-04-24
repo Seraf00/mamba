@@ -288,13 +288,29 @@ def parse_args():
     return parser.parse_args()
 
 
-def _load_param_config(args) -> Dict[str, int]:
-    """Load parameter-matched base_features from JSON config or compute on the fly."""
-    if args.param_config:
-        with open(args.param_config) as f:
-            config = json.load(f)
-        return {m['model']: m['base_features'] for m in config.get('param_matched_training', [])}
-    return {}
+def _load_param_config(args) -> Dict[str, Dict[str, Any]]:
+    """Load parameter-matched override kwargs from JSON config.
+
+    Returns a mapping ``{base_model_name: override_kwargs_dict}``. Models tied
+    to fixed pretrained Transformer weights (Swin-Tiny / ViT-B/16) are
+    excluded by ``param_match.py`` itself, so they simply don't appear here.
+
+    Supports both the new schema (``override_kwargs`` dict per entry) and the
+    legacy schema (``base_features`` int) for back-compat with old configs.
+    """
+    if not args.param_config:
+        return {}
+    with open(args.param_config) as f:
+        config = json.load(f)
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for m in config.get('param_matched_training', []):
+        if 'override_kwargs' in m and m['override_kwargs']:
+            out[m['model']] = dict(m['override_kwargs'])
+        elif 'base_features' in m and m['base_features']:
+            # Legacy schema
+            out[m['model']] = {'base_features': int(m['base_features'])}
+    return out
 
 
 def get_models_to_train(args) -> List[Dict[str, Any]]:
@@ -360,17 +376,29 @@ def get_models_to_train(args) -> List[Dict[str, Any]]:
         base_to_mamba = {v: k for k, v in mamba_to_base.items()}
 
         # For each base model in the list, add a wider "param-matched" version
+        # using whatever knob the model exposes (base_features, backbone, ...).
+        # Models absent from param_config (e.g. swin_unet/transunet which are
+        # tied to fixed pretrained weights) silently skip the wide variant.
         base_models_in_list = [m for m in models if m['mamba_type'] is None and m['name'] in base_to_mamba]
         for base_model in base_models_in_list:
             base_name = base_model['name']
-            bf = param_config.get(base_name)
-            if bf and bf != 64:
-                models.append({
-                    'name': base_name,
-                    'mamba_type': None,
-                    'display_name': f"{base_name}_wide",
-                    'extra_kwargs': {'base_features': bf},
-                })
+            override_kwargs = param_config.get(base_name)
+            if not override_kwargs:
+                continue
+            # Skip if the override is a no-op vs the model's defaults
+            # (e.g. base_features=64 on a model whose default is also 64).
+            is_default_bf = (
+                set(override_kwargs.keys()) == {'base_features'}
+                and override_kwargs['base_features'] == 64
+            )
+            if is_default_bf:
+                continue
+            models.append({
+                'name': base_name,
+                'mamba_type': None,
+                'display_name': f"{base_name}_wide",
+                'extra_kwargs': dict(override_kwargs),
+            })
 
     # Handle resume_from
     if args.resume_from:
