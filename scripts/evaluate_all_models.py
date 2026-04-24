@@ -695,14 +695,30 @@ def main():
     }
     
     with open(output_dir / 'evaluation_results.json', 'w') as f:
-        # Convert numpy arrays to lists
+        # Convert numpy arrays/scalars to native Python types so json.dump works.
+        # numpy.bool_, numpy.int64, numpy.float32 etc. are NOT JSON-serializable
+        # by default; the previous version only handled arrays + containers.
         def convert(obj):
             if isinstance(obj, np.ndarray):
                 return obj.tolist()
-            elif isinstance(obj, dict):
-                return {k: convert(v) for k, v in obj.items()}
-            elif isinstance(obj, list):
+            if isinstance(obj, (np.bool_,)):
+                return bool(obj)
+            if isinstance(obj, np.integer):
+                return int(obj)
+            if isinstance(obj, np.floating):
+                # NaN/Inf become null per json spec when allow_nan=False; keep as float
+                f_val = float(obj)
+                if np.isnan(f_val) or np.isinf(f_val):
+                    return None
+                return f_val
+            if isinstance(obj, dict):
+                return {str(k): convert(v) for k, v in obj.items()}
+            if isinstance(obj, (list, tuple)):
                 return [convert(v) for v in obj]
+            if isinstance(obj, float):
+                if np.isnan(obj) or np.isinf(obj):
+                    return None
+                return obj
             return obj
         json.dump(convert(output), f, indent=2)
     
@@ -747,10 +763,17 @@ def main():
         ef_mae = ef_metrics.get('ef_mae', float('nan'))
         ef_r = ef_metrics.get('ef_correlation', float('nan'))
 
+        # Guard format specifiers against None / non-numeric values
+        def _fmt(v, spec):
+            try:
+                return format(float(v), spec)
+            except (TypeError, ValueError):
+                return f"{'N/A':>{spec.split('.')[0].lstrip('>').lstrip('<')}}" if '.' in spec else 'N/A'
+
         print(
             f"{name:<30} "
-            f"{dice:>8.4f} {lv_endo:>9.4f} {lv_epi:>9.4f} {la:>7.4f} "
-            f"{hd95:>8.2f} {ef_mae:>8.2f} {ef_r:>7.3f} {params_str:>9}"
+            f"{_fmt(dice,'>8.4f')} {_fmt(lv_endo,'>9.4f')} {_fmt(lv_epi,'>9.4f')} {_fmt(la,'>7.4f')} "
+            f"{_fmt(hd95,'>8.2f')} {_fmt(ef_mae,'>8.2f')} {_fmt(ef_r,'>7.3f')} {params_str:>9}"
         )
 
     print("-" * 120)

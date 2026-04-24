@@ -94,9 +94,21 @@ def load_model_from_checkpoint(ckpt_info: Dict, device: str):
 
 
 def get_test_samples(data_dir: str, n_samples: int = 3, seed: int = 42) -> List[Dict]:
-    """Load a few test samples for explainability."""
+    """Load a few test samples for explainability.
+
+    NOTE: ``CAMUSDataset`` returns a ``(image, mask)`` tuple by default for
+    training-loop compatibility, and only switches to a dict (with metadata
+    such as ``patient_id``/``pixel_spacing``) when ``include_info=True``.
+    Explainability needs metadata, so we request the dict form. We also
+    fall back gracefully if a future version returns the tuple form.
+    """
     transform = get_transforms(split='val', img_size=(256, 256))
-    dataset = CAMUSDataset(root_dir=data_dir, split='test', transform=transform)
+    dataset = CAMUSDataset(
+        root_dir=data_dir,
+        split='test',
+        transform=transform,
+        include_info=True,
+    )
 
     rng = np.random.RandomState(seed)
     indices = rng.choice(len(dataset), size=min(n_samples, len(dataset)), replace=False)
@@ -104,10 +116,31 @@ def get_test_samples(data_dir: str, n_samples: int = 3, seed: int = 42) -> List[
     samples = []
     for idx in indices:
         sample = dataset[idx]
-        image = sample['image'].unsqueeze(0)  # (1, 1, H, W)
-        mask = sample['mask'].unsqueeze(0) if 'mask' in sample else None
-        patient_id = sample.get('patient_id', f'sample_{idx}')
-        samples.append({'image': image, 'mask': mask, 'patient_id': patient_id, 'idx': int(idx)})
+
+        # Defensive: accept either dict (include_info=True) or (image, mask) tuple
+        if isinstance(sample, dict):
+            image = sample['image']
+            mask = sample.get('mask', None)
+            patient_id = sample.get('patient_id', f'sample_{idx}')
+        elif isinstance(sample, (tuple, list)) and len(sample) >= 2:
+            image, mask = sample[0], sample[1]
+            patient_id = f'sample_{idx}'
+        else:
+            raise TypeError(
+                f"Unexpected sample type from CAMUSDataset[{idx}]: {type(sample)}"
+            )
+
+        # Add batch dim -> (1, 1, H, W)
+        image = image.unsqueeze(0)
+        if mask is not None:
+            mask = mask.unsqueeze(0)
+
+        samples.append({
+            'image': image,
+            'mask': mask,
+            'patient_id': patient_id,
+            'idx': int(idx),
+        })
 
     return samples
 

@@ -58,7 +58,18 @@ def main():
     
     # Get models to benchmark
     if args.all:
-        model_names = list(MODEL_REGISTRY.keys())
+        # MODEL_REGISTRY contains backward-compat aliases (e.g. 'gudu' ->
+        # DenseContextUNet, 'mamba_gudu' -> MambaDenseContextUNet) that point
+        # to the same class as a canonical name. Dedupe by class identity so
+        # we don't double-benchmark the same architecture under two names.
+        seen_classes = set()
+        model_names = []
+        for name, cls in MODEL_REGISTRY.items():
+            cls_id = id(cls)
+            if cls_id in seen_classes:
+                continue
+            seen_classes.add(cls_id)
+            model_names.append(name)
     elif args.models:
         model_names = args.models
     else:
@@ -69,7 +80,7 @@ def main():
             'mamba_unet_v2',
             'pure_mamba_unet'
         ]
-    
+
     print(f"Benchmarking {len(model_names)} models")
     print(f"Input size: {args.input_size}")
     print(f"Device: {device}")
@@ -86,20 +97,39 @@ def main():
     
     # Benchmark each model
     all_results = []
-    
+
+    # Base (non-Mamba) models do NOT accept a `mamba_type` kwarg. We detect
+    # mamba-aware models by their registry name prefix and only fan out across
+    # `--mamba_types` for those — base models are benchmarked exactly once.
+    def _is_mamba_model(name: str) -> bool:
+        n = name.lower()
+        return n.startswith('mamba_') or n.startswith('pure_mamba')
+
+    seen_base = set()
+
     for model_name in model_names:
-        for mamba_type in args.mamba_types:
+        if _is_mamba_model(model_name):
+            mamba_type_iter = list(args.mamba_types)
+        else:
+            # Skip duplicate iterations for base models
+            if model_name in seen_base:
+                continue
+            seen_base.add(model_name)
+            mamba_type_iter = [None]
+
+        for mamba_type in mamba_type_iter:
             try:
-                # Create model
-                model = get_model(
-                    model_name,
-                    in_channels=args.input_size[1],
-                    num_classes=4,
-                    mamba_type=mamba_type
-                )
-                
-                name = f"{model_name}_{mamba_type}" if 'mamba' in model_name.lower() else model_name
-                
+                # Create model — only forward mamba_type to mamba-aware models
+                model_kwargs = {
+                    'in_channels': args.input_size[1],
+                    'num_classes': 4,
+                }
+                if mamba_type is not None:
+                    model_kwargs['mamba_type'] = mamba_type
+                model = get_model(model_name, **model_kwargs)
+
+                name = f"{model_name}_{mamba_type}" if mamba_type else model_name
+
                 # Run benchmark
                 result = benchmark.benchmark(model, name)
                 all_results.append(result)
