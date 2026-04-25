@@ -159,42 +159,59 @@ def measure_memory_usage(
 def estimate_flops(
     model: nn.Module,
     input_size: Tuple[int, ...] = (1, 1, 256, 256),
-    device: str = 'cpu'
+    device: Optional[str] = None,
 ) -> Optional[int]:
     """
-    Estimate model FLOPs using fvcore if available.
-    
+    Estimate model FLOPs using fvcore (preferred) or thop (fallback).
+
     Args:
         model: PyTorch model
         input_size: Input tensor size
-        device: Device (CPU recommended for accuracy)
-        
+        device: Device to run the trace on. If ``None``, we use the device
+            of the model's first parameter (so we don't accidentally yank
+            a CUDA-only model onto CPU and trigger a slow fallback path
+            inside, e.g., mamba_ssm's selective scan kernel).
+
     Returns:
-        Number of FLOPs or None if fvcore not available
+        Number of FLOPs or None if estimation isn't available / failed.
     """
+    if device is None:
+        try:
+            device = next(model.parameters()).device.type
+        except StopIteration:
+            device = 'cpu'
+
     try:
         from fvcore.nn import FlopCountAnalysis
-        
+        # Suppress fvcore's "Unsupported operator ..." chatter -- the
+        # missing ops contribute negligible FLOPs and the messages
+        # dominate the benchmark log.
+        import logging
+        logging.getLogger('fvcore.nn.jit_analysis').setLevel(logging.ERROR)
+
         model = model.to(device)
         model.eval()
-        
+
         dummy_input = torch.randn(*input_size, device=device)
-        
+
         flops = FlopCountAnalysis(model, dummy_input)
+        # Silence per-call warnings from fvcore as well
+        flops.unsupported_ops_warnings(False)
+        flops.uncalled_modules_warnings(False)
         return flops.total()
-        
+
     except ImportError:
         # Try thop as alternative
         try:
             from thop import profile
-            
+
             model = model.to(device)
             model.eval()
-            
+
             dummy_input = torch.randn(*input_size, device=device)
             flops, _ = profile(model, inputs=(dummy_input,), verbose=False)
             return int(flops)
-            
+
         except ImportError:
             return None
 
@@ -236,10 +253,27 @@ class EfficiencyBenchmark:
         # Parameter counts
         total_params = count_parameters(model)
         trainable_params = count_parameters(model, trainable_only=True)
-        
-        # FLOPs
-        flops = estimate_flops(model, self.input_size)
-        
+
+        # FLOPs estimation.
+        # We run on the SAME device as the inference benchmark (typically
+        # CUDA). The previous default of device='cpu' broke Mamba models in
+        # two ways:
+        #   1. mamba_ssm's native CUDA kernel rejects CPU tensors with
+        #      `Expected x.is_cuda() to be true`, triggering a Python-only
+        #      selective-scan fallback that is ~100-1000x slower and made
+        #      the benchmark appear to hang for minutes on each Mamba model.
+        #   2. fvcore counts certain ops (e.g. SDPA on CUDA) differently --
+        #      keeping inference and FLOPs on the same device makes the
+        #      number directly comparable to the inference time we report.
+        # If FLOP estimation fails for any reason (e.g. an op fvcore can't
+        # trace), we degrade gracefully to None rather than killing the
+        # benchmark mid-run.
+        try:
+            flops = estimate_flops(model, self.input_size, device=self.device)
+        except Exception as e:
+            print(f"  [warn] FLOPs estimation skipped for {model_name}: {e}")
+            flops = None
+
         # Inference time
         timing = measure_inference_time(
             model,
