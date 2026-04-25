@@ -118,11 +118,29 @@ def find_model_checkpoints(checkpoint_dir: Path) -> List[Dict[str, Any]]:
                     info = json.load(f)
             else:
                 info = {'display_name': model_dir.name}
-            
+
+            # Resolve the registry name. We prefer the explicit ``model_name``
+            # the trainer wrote out. If absent (legacy checkpoint), fall back
+            # to the directory name with a few suffix-stripping rules so that
+            # display names like ``unet_v1_wide`` map back to the registry
+            # key ``unet_v1`` instead of triggering ``Unknown model``.
+            fallback_name = model_dir.name
+            for suffix in ('_wide',):
+                if fallback_name.endswith(suffix):
+                    fallback_name = fallback_name[: -len(suffix)]
+                    break
+            if '_mamba' in fallback_name and not fallback_name.startswith('mamba_'):
+                # e.g. legacy "_mamba" suffix encoded the ssm type
+                fallback_name = fallback_name.split('_mamba')[0]
+
             models.append({
-                'name': info.get('model_name', model_dir.name.split('_mamba')[0] if '_mamba' in model_dir.name else model_dir.name),
+                'name': info.get('model_name', fallback_name),
                 'display_name': info.get('display_name', model_dir.name),
                 'mamba_type': info.get('mamba_type'),
+                # Construction kwargs that the trainer used (e.g. base_features=96
+                # for unet_v1_wide). Required to reconstruct param-matched widened
+                # baselines correctly. Empty dict for ordinary base/Mamba models.
+                'extra_kwargs': dict(info.get('extra_kwargs', {}) or {}),
                 'checkpoint': checkpoint,
                 'dir': model_dir,
                 'training_results': info
@@ -136,6 +154,77 @@ def get_img_size(model_name: str, default: int = 256) -> int:
     if any(s in model_name for s in SWIN_MODELS):
         return 224
     return default
+
+
+def _infer_base_features_from_state_dict(
+    state_dict: Dict[str, torch.Tensor], in_channels: int = 1
+) -> Optional[int]:
+    """Infer ``base_features`` from a checkpoint's first conv layer.
+
+    The first 2D conv after the input has weight shape
+    ``[base_features, in_channels, k, k]``. We search for the first 4D
+    tensor whose ``shape[1] == in_channels`` and report its ``shape[0]``.
+    Returns ``None`` if no such tensor exists (e.g. the model has no
+    in-channel conv at the very front).
+    """
+    for v in state_dict.values():
+        if hasattr(v, 'dim') and v.dim() == 4 and v.shape[1] == in_channels:
+            return int(v.shape[0])
+    return None
+
+
+def _build_model_kwargs(model_config: Dict[str, Any]) -> Dict[str, Any]:
+    """Assemble the kwargs for ``get_model`` from a model_config dict."""
+    kwargs: Dict[str, Any] = {'in_channels': 1, 'num_classes': 4}
+    if model_config.get('mamba_type'):
+        kwargs['mamba_type'] = model_config['mamba_type']
+    extra = model_config.get('extra_kwargs') or {}
+    if extra:
+        kwargs.update(extra)
+    return kwargs
+
+
+def _load_checkpoint_state(checkpoint_path, device) -> Dict[str, torch.Tensor]:
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    if 'model_state_dict' in ckpt:
+        return ckpt['model_state_dict']
+    if 'state_dict' in ckpt:
+        return ckpt['state_dict']
+    return ckpt
+
+
+def _construct_and_load(model_config: Dict[str, Any], device):
+    """Build the model and load the checkpoint, with two recovery paths.
+
+    Recovery 1: if construction succeeds but ``load_state_dict`` fails with
+    a size mismatch, re-construct with ``base_features`` inferred from the
+    checkpoint's first conv shape. This rescues legacy ``_wide`` checkpoints
+    written before the trainer started persisting ``extra_kwargs``.
+    """
+    state = _load_checkpoint_state(model_config['checkpoint'], device)
+    kwargs = _build_model_kwargs(model_config)
+    model = get_model(model_config['name'], **kwargs)
+    try:
+        model.load_state_dict(state)
+        return model
+    except RuntimeError as err:
+        if 'size mismatch' not in str(err):
+            raise
+        # Try recovering by inferring base_features from the checkpoint.
+        bf = _infer_base_features_from_state_dict(state, in_channels=kwargs.get('in_channels', 1))
+        if bf is None or kwargs.get('base_features') == bf:
+            raise
+        recovered = dict(kwargs)
+        recovered['base_features'] = bf
+        print(f"  [recover] retrying with base_features={bf} (inferred from checkpoint)")
+        del model
+        model = get_model(model_config['name'], **recovered)
+        model.load_state_dict(state)
+        # Persist the recovered value so EF re-construction below uses it
+        if model_config.get('extra_kwargs') is None:
+            model_config['extra_kwargs'] = {}
+        model_config['extra_kwargs']['base_features'] = bf
+        return model
 
 
 def evaluate_model(
@@ -153,25 +242,7 @@ def evaluate_model(
       - Per-class HD95 and ASSD in mm (using per-sample NIfTI spacing)
       - Per-sample Dice for bootstrap CI and Wilcoxon tests
     """
-    model_name = model_config['name']
-    mamba_type = model_config['mamba_type']
-    checkpoint_path = model_config['checkpoint']
-
-    # Create model
-    model_kwargs = {'in_channels': 1, 'num_classes': 4}
-    if mamba_type:
-        model_kwargs['mamba_type'] = mamba_type
-
-    model = get_model(model_name, **model_kwargs)
-
-    # Load checkpoint
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    if 'model_state_dict' in checkpoint:
-        model.load_state_dict(checkpoint['model_state_dict'])
-    elif 'state_dict' in checkpoint:
-        model.load_state_dict(checkpoint['state_dict'])
-    else:
-        model.load_state_dict(checkpoint)
+    model = _construct_and_load(model_config, device)
 
     model = model.to(device)
     model.eval()
@@ -608,18 +679,14 @@ def main():
             if args.compute_ef:
                 print(f"  Computing biplane EF...")
                 try:
-                    # Reload model for EF eval (need fresh instance)
-                    model_kwargs = {'in_channels': 1, 'num_classes': 4}
-                    if model_config['mamba_type']:
-                        model_kwargs['mamba_type'] = model_config['mamba_type']
-                    ef_model = get_model(model_config['name'], **model_kwargs)
-                    checkpoint = torch.load(model_config['checkpoint'], map_location=device, weights_only=False)
-                    if 'model_state_dict' in checkpoint:
-                        ef_model.load_state_dict(checkpoint['model_state_dict'])
-                    elif 'state_dict' in checkpoint:
-                        ef_model.load_state_dict(checkpoint['state_dict'])
-                    else:
-                        ef_model.load_state_dict(checkpoint)
+                    # Reload model for EF eval (need fresh instance). Reuse
+                    # the same construct-and-load helper so that both
+                    # ``extra_kwargs`` (e.g. base_features=96 for _wide) and
+                    # the checkpoint-shape recovery path apply here too.
+                    # ``_construct_and_load`` already handles all three
+                    # checkpoint formats (model_state_dict / state_dict /
+                    # bare state) -- no further loading needed.
+                    ef_model = _construct_and_load(model_config, device)
                     ef_model = ef_model.to(device)
 
                     ef_results = evaluate_ef_biplane(

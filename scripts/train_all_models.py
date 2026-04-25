@@ -602,10 +602,15 @@ def train_single_model(
             print(f"  Warning: Benchmark failed - {e}")
     
     # Save model info
+    # NOTE: ``extra_kwargs`` is critical for parameter-matched ``_wide``
+    # variants -- without it, evaluate_all_models.py would reconstruct the
+    # model with default base_features and fail to load the checkpoint with
+    # a "size mismatch" error.
     results = {
         'model_name': model_name,
         'display_name': display_name,
         'mamba_type': mamba_type,
+        'extra_kwargs': model_config.get('extra_kwargs', {}),
         'img_size': img_size,
         'num_params': num_params,
         'trainable_params': trainable_params,
