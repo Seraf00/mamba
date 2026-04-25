@@ -53,7 +53,18 @@ def discover_checkpoints(results_dirs: List[str]) -> List[Dict]:
                     meta = json.load(f)
 
             display_name = meta.get('display_name', model_dir.name)
-            model_name = meta.get('model_name', display_name.split('_mamba')[0] if '_mamba' not in display_name else display_name)
+
+            # Resolve registry name. Prefer the explicit ``model_name`` written
+            # by the trainer; fall back to the directory name with ``_wide``
+            # stripped (param-matched widened baselines) so that display names
+            # like ``unet_v1_wide`` map to the registry key ``unet_v1``.
+            fallback_name = model_dir.name
+            if fallback_name.endswith('_wide'):
+                fallback_name = fallback_name[:-5]
+            if '_mamba' in fallback_name and not fallback_name.startswith('mamba_'):
+                fallback_name = fallback_name.split('_mamba')[0]
+
+            model_name = meta.get('model_name', fallback_name)
             mamba_type = meta.get('mamba_type', None)
 
             checkpoints.append({
@@ -61,6 +72,9 @@ def discover_checkpoints(results_dirs: List[str]) -> List[Dict]:
                 'model_name': model_name,
                 'display_name': display_name,
                 'mamba_type': mamba_type,
+                # Construction kwargs (e.g. base_features=96 for unet_v1_wide).
+                # Empty dict for ordinary base/Mamba models.
+                'extra_kwargs': dict(meta.get('extra_kwargs', {}) or {}),
                 'model_dir': str(model_dir),
             })
 
@@ -71,23 +85,62 @@ def discover_checkpoints(results_dirs: List[str]) -> List[Dict]:
 # Load helpers
 # ---------------------------------------------------------------------------
 
+def _infer_base_features(state_dict, in_channels: int = 1) -> Optional[int]:
+    """Infer ``base_features`` from a checkpoint's first conv layer.
+
+    The first 2D conv after the input has shape
+    ``[base_features, in_channels, k, k]``. Returns ``None`` if no such
+    tensor is present.
+    """
+    for v in state_dict.values():
+        if hasattr(v, 'dim') and v.dim() == 4 and v.shape[1] == in_channels:
+            return int(v.shape[0])
+    return None
+
+
 def load_model_from_checkpoint(ckpt_info: Dict, device: str):
-    """Load a model from checkpoint info dict."""
+    """Load a model from checkpoint info dict.
+
+    Reads ``extra_kwargs`` (e.g. ``base_features=96`` for param-matched
+    widened baselines) from the metadata. If the resulting model still
+    fails ``load_state_dict`` with a size mismatch, recover by inferring
+    ``base_features`` from the checkpoint's first conv weight shape -- this
+    rescues legacy ``_wide`` checkpoints written before the trainer started
+    persisting ``extra_kwargs``.
+    """
     checkpoint = torch.load(ckpt_info['checkpoint'], map_location=device, weights_only=False)
 
     model_name = ckpt_info['model_name']
-    mamba_type = ckpt_info['mamba_type']
+    mamba_type = ckpt_info.get('mamba_type')
+    extra_kwargs = ckpt_info.get('extra_kwargs') or {}
 
     kwargs = {'in_channels': 1, 'num_classes': 4}
     if mamba_type:
         kwargs['mamba_type'] = mamba_type
+    if extra_kwargs:
+        kwargs.update(extra_kwargs)
 
-    model = get_model(model_name, **kwargs)
-
-    # Load weights (handle different checkpoint formats)
     state_dict = checkpoint.get('model_state_dict',
                   checkpoint.get('state_dict', checkpoint))
-    model.load_state_dict(state_dict)
+
+    model = get_model(model_name, **kwargs)
+    try:
+        model.load_state_dict(state_dict)
+    except RuntimeError as err:
+        if 'size mismatch' not in str(err):
+            raise
+        bf = _infer_base_features(state_dict, in_channels=kwargs.get('in_channels', 1))
+        if bf is None or kwargs.get('base_features') == bf:
+            raise
+        recovered = dict(kwargs)
+        recovered['base_features'] = bf
+        print(f"    [recover] retrying with base_features={bf} (inferred from checkpoint)")
+        del model
+        model = get_model(model_name, **recovered)
+        model.load_state_dict(state_dict)
+        # Persist for any later callers (e.g. uncertainty re-construction)
+        ckpt_info.setdefault('extra_kwargs', {})['base_features'] = bf
+
     model = model.to(device)
     model.eval()
     return model
@@ -149,52 +202,112 @@ def get_test_samples(data_dir: str, n_samples: int = 3, seed: int = 42) -> List[
 # Per-model explainability
 # ---------------------------------------------------------------------------
 
-def run_gradcam_for_model(model, image: torch.Tensor, target_class: int = 1):
+# Models requiring 224x224 input (Swin window attention requires sizes
+# divisible by window_size=7 * 2^num_stages = 7*32 = 224, NOT 256).
+SWIN_MODELS = {'swin_unet', 'mamba_swin_unet'}
+
+
+def _maybe_resize_for_model(image: torch.Tensor, model_name: Optional[str]) -> torch.Tensor:
+    """Swin-based models need 224x224; everyone else uses native 256x256."""
+    if model_name and any(s in model_name.lower() for s in SWIN_MODELS):
+        if image.shape[-1] != 224 or image.shape[-2] != 224:
+            return torch.nn.functional.interpolate(
+                image, size=(224, 224), mode='bilinear', align_corners=False
+            )
+    return image
+
+
+def _find_last_conv_name(model) -> Optional[str]:
+    """Return the dotted ``named_modules`` path of the last Conv2d layer.
+
+    GradCAM expects a *string* path (it calls ``.split('.')`` on it to walk
+    the module tree). Passing a Conv2d module directly produces the
+    "'Conv2d' object has no attribute 'split'" error.
+    """
+    last_name = None
+    for name, module in model.named_modules():
+        if isinstance(module, torch.nn.Conv2d):
+            last_name = name
+    return last_name
+
+
+def run_gradcam_for_model(
+    model, image: torch.Tensor, target_class: int = 1,
+    model_name: Optional[str] = None,
+):
     """Run Grad-CAM and return the heatmap as numpy array."""
     from explainability import GradCAM
 
-    # Find last conv layer
-    target_layer = None
-    for name, module in model.named_modules():
-        if isinstance(module, torch.nn.Conv2d):
-            target_layer = module
-
-    if target_layer is None:
+    target_layer_name = _find_last_conv_name(model)
+    if target_layer_name is None:
         return None
 
     try:
-        gradcam = GradCAM(model, target_layer)
-        cam = gradcam.generate(image, target_class=target_class)
+        image = _maybe_resize_for_model(image, model_name)
+        # ``use_cuda=False`` -- the model is already on the right device
+        # and we don't want GradCAM to call ``.cuda()`` on it again.
+        gradcam = GradCAM(model, target_layer_name, use_cuda=False)
+        cam = gradcam.generate(image, class_idx=target_class)
+        gradcam.remove_hooks()
         return cam
     except Exception as e:
         print(f"    Grad-CAM error: {e}")
         return None
 
 
-def run_uncertainty_for_model(model, image: torch.Tensor, n_samples: int = 10):
-    """Run MC Dropout uncertainty and return uncertainty map."""
+def run_uncertainty_for_model(
+    model, image: torch.Tensor, n_samples: int = 10,
+    model_name: Optional[str] = None,
+):
+    """Run MC Dropout uncertainty and return per-pixel maps."""
     from explainability import UncertaintyEstimator
 
     try:
-        estimator = UncertaintyEstimator(model, n_samples=n_samples)
-        pred, probs, uncertainty = estimator.predict_with_uncertainty(image)
+        image = _maybe_resize_for_model(image, model_name)
+        estimator = UncertaintyEstimator(model, method='mc_dropout', n_samples=n_samples)
+        # The API returns a dict, NOT a 3-tuple. The original 3-tuple unpack
+        # silently bound the dict's KEYS to (pred, probs, uncertainty),
+        # producing the misleading "'str' object has no attribute 'squeeze'".
+        result = estimator.predict_with_uncertainty(image)
+        prediction = result['prediction']    # mean probabilities (B, C, H, W)
+        uncertainty = result['uncertainty']  # uncertainty map (varies)
+
+        pred_class = prediction.argmax(dim=1).squeeze().cpu().numpy()
+        confidence = prediction.max(dim=1)[0].squeeze().cpu().numpy()
+
+        if uncertainty.dim() == 4:
+            unc_map = uncertainty.mean(dim=1).squeeze().cpu().numpy()
+        else:
+            unc_map = uncertainty.squeeze().cpu().numpy()
+
         return {
-            'prediction': pred.squeeze().cpu().numpy(),
-            'confidence': probs.max(dim=1)[0].squeeze().cpu().numpy(),
-            'uncertainty': uncertainty.squeeze().cpu().numpy(),
+            'prediction': pred_class,
+            'confidence': confidence,
+            'uncertainty': unc_map,
         }
     except Exception as e:
         print(f"    Uncertainty error: {e}")
         return None
 
 
-def run_mamba_states_for_model(model, image: torch.Tensor):
-    """Run Mamba state visualization, return figure or None."""
+def run_mamba_states_for_model(
+    model, image: torch.Tensor,
+    model_name: Optional[str] = None,
+):
+    """Run Mamba state visualization, return matplotlib figure or None."""
     from explainability import MambaStateVisualizer
 
     try:
+        image = _maybe_resize_for_model(image, model_name)
         visualizer = MambaStateVisualizer(model)
-        fig = visualizer.visualize_state_evolution(image)
+        if not visualizer.mamba_layer_names:
+            return None
+        # Pick the deepest Mamba layer (typically the bottleneck) -- this is
+        # both the most informative for state visualization and the one
+        # readers expect to see in the paper.
+        layer_name = visualizer.mamba_layer_names[-1]
+        fig = visualizer.plot_state_dynamics(image, layer_name)
+        visualizer.remove_hooks()
         return fig
     except Exception as e:
         print(f"    Mamba state error: {e}")
@@ -411,7 +524,11 @@ def main():
 
             # Grad-CAM
             if 'gradcam' in args.methods:
-                cam = run_gradcam_for_model(model, image, target_class=args.target_class)
+                cam = run_gradcam_for_model(
+                    model, image,
+                    target_class=args.target_class,
+                    model_name=ckpt_info['model_name'],
+                )
                 result['gradcams'].append(cam)
 
                 # Save individual
@@ -426,7 +543,11 @@ def main():
 
             # Uncertainty
             if 'uncertainty' in args.methods:
-                unc = run_uncertainty_for_model(model, image, n_samples=args.n_mc_samples)
+                unc = run_uncertainty_for_model(
+                    model, image,
+                    n_samples=args.n_mc_samples,
+                    model_name=ckpt_info['model_name'],
+                )
                 result['uncertainties'].append(unc)
 
                 if unc is not None:
@@ -446,7 +567,10 @@ def main():
 
         # Mamba states (only for Mamba models, one sample)
         if 'mamba_states' in args.methods and is_mamba:
-            fig = run_mamba_states_for_model(model, samples[0]['image'])
+            fig = run_mamba_states_for_model(
+                model, samples[0]['image'],
+                model_name=ckpt_info['model_name'],
+            )
             if fig is not None:
                 fig.savefig(model_out / 'mamba_states.png', dpi=150, bbox_inches='tight')
                 plt.close(fig)
