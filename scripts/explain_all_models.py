@@ -243,11 +243,14 @@ def run_gradcam_for_model(
         return None
 
     try:
-        image = _maybe_resize_for_model(image, model_name)
+        # IMPORTANT: clone+detach so GradCAM's internal
+        # ``input_image.requires_grad_(True)`` does not mutate the caller's
+        # tensor (which is needed downstream for plotting via .cpu().numpy()).
+        image_for_cam = _maybe_resize_for_model(image, model_name).detach().clone()
         # ``use_cuda=False`` -- the model is already on the right device
         # and we don't want GradCAM to call ``.cuda()`` on it again.
         gradcam = GradCAM(model, target_layer_name, use_cuda=False)
-        cam = gradcam.generate(image, class_idx=target_class)
+        cam = gradcam.generate(image_for_cam, class_idx=target_class)
         gradcam.remove_hooks()
         return cam
     except Exception as e:
@@ -534,7 +537,9 @@ def main():
                 # Save individual
                 if cam is not None:
                     fig, ax = plt.subplots(1, 1, figsize=(5, 5))
-                    ax.imshow(image.squeeze().cpu().numpy(), cmap='gray')
+                    # .detach() needed: run_gradcam_for_model internally calls
+                    # input.requires_grad_(True) on the same tensor.
+                    ax.imshow(image.detach().squeeze().cpu().numpy(), cmap='gray')
                     ax.imshow(cam, cmap='jet', alpha=0.5)
                     ax.set_title(f'{display_name} — Patient {sample["patient_id"]}', fontsize=9)
                     ax.axis('off')
