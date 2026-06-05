@@ -261,9 +261,27 @@ class MambaStateVisualizer:
         axes[0, 1].set_title('Input Image')
         axes[0, 1].axis('off')
         
-        # Overlay
-        overlay = 0.5 * (img - img.min()) / (img.max() - img.min() + 1e-8)
-        overlay += 0.5 * vis[layer_name]
+        # Overlay -- the state map is at the layer's spatial resolution
+        # (e.g. bottleneck 64x64) while the input image is full-res
+        # (256x256 or 224x224). Resize the state map to the image grid
+        # before blending so the two arrays broadcast.
+        state_map = vis[layer_name]
+        if state_map.shape != img.shape:
+            try:
+                import cv2
+                state_map = cv2.resize(
+                    state_map.astype('float32'),
+                    (img.shape[1], img.shape[0]),
+                    interpolation=cv2.INTER_LINEAR,
+                )
+            except Exception:
+                # Fallback: nearest-neighbour upsampling via numpy repeat
+                ry = max(1, img.shape[0] // state_map.shape[0])
+                rx = max(1, img.shape[1] // state_map.shape[1])
+                state_map = np.kron(state_map, np.ones((ry, rx)))
+                state_map = state_map[:img.shape[0], :img.shape[1]]
+        img_norm = (img - img.min()) / (img.max() - img.min() + 1e-8)
+        overlay = 0.5 * img_norm + 0.5 * state_map
         axes[1, 0].imshow(overlay, cmap='viridis')
         axes[1, 0].set_title('State Overlay')
         axes[1, 0].axis('off')

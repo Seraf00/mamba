@@ -46,6 +46,11 @@ def parse_args():
         '--model', type=str, default=None,
         help='Model name (if not stored in checkpoint)'
     )
+    parser.add_argument(
+        '--mamba_type', type=str, default=None,
+        choices=['mamba', 'mamba2', 'vmamba'],
+        help='SSM variant; auto-detected from results.json / checkpoint keys if omitted'
+    )
     
     # Output
     parser.add_argument(
@@ -87,31 +92,85 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_model(checkpoint_path: str, model_name: Optional[str], device: str):
-    """Load model from checkpoint."""
+def _infer_mamba_type(state_dict) -> Optional[str]:
+    """Infer the SSM variant from the checkpoint's parameter key signatures.
+
+    The three SSM variants leave distinct fingerprints in the state-dict:
+      * VMamba/SS2D : keys contain ``.ss2d.`` (e.g. ``ss2d.A_logs``)
+      * Mamba-2/SSD : keys contain ``.mamba2`` or ``mamba2_native``
+      * Mamba/S6    : keys contain ``.mamba.mamba_native.`` (1D scan)
+    Returns None if no SSM keys are present (i.e. a base model).
+    """
+    keys = list(state_dict.keys())
+    joined = "\n".join(keys)
+    if ".ss2d." in joined or "ss2d.A_logs" in joined:
+        return "vmamba"
+    if "mamba2" in joined:
+        return "mamba2"
+    if "mamba_native" in joined or ".mamba." in joined:
+        return "mamba"
+    return None
+
+
+def load_model(checkpoint_path: str, model_name: Optional[str], device: str,
+               mamba_type: Optional[str] = None):
+    """Load model from checkpoint.
+
+    If ``mamba_type`` is not given, it is read from the sibling
+    ``results.json`` (written by train_all_models.py) or, failing that,
+    inferred from the checkpoint's key signatures so we build the SSM
+    variant that actually matches the saved weights.
+    """
     from models import get_model
-    
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-    
-    # Try to get model name from checkpoint
-    if model_name is None:
-        config = checkpoint.get('config', {})
-        model_name = config.get('model', 'mamba_unet_v1')
-    
-    # Create model
-    model = get_model(model_name, in_channels=1, num_classes=4)
-    
-    # Load weights
+    import json
+    from pathlib import Path as _Path
+
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+
+    # Resolve state dict early so we can inspect it.
     if 'model_state_dict' in checkpoint:
-        model.load_state_dict(checkpoint['model_state_dict'])
+        state_dict = checkpoint['model_state_dict']
     elif 'state_dict' in checkpoint:
-        model.load_state_dict(checkpoint['state_dict'])
+        state_dict = checkpoint['state_dict']
     else:
-        model.load_state_dict(checkpoint)
-    
+        state_dict = checkpoint
+
+    # Try sibling results.json for authoritative metadata
+    meta = {}
+    results_json = _Path(checkpoint_path).parent / 'results.json'
+    if results_json.exists():
+        try:
+            with open(results_json) as f:
+                meta = json.load(f)
+        except Exception:
+            meta = {}
+
+    # Try to get model name from metadata / checkpoint config
+    if model_name is None:
+        model_name = meta.get('model_name')
+    if model_name is None:
+        config = checkpoint.get('config', {}) if isinstance(checkpoint, dict) else {}
+        model_name = config.get('model', 'mamba_unet_v1')
+
+    # Resolve mamba_type: explicit arg > results.json > inferred from keys
+    if mamba_type is None:
+        mamba_type = meta.get('mamba_type')
+    if mamba_type is None:
+        mamba_type = _infer_mamba_type(state_dict)
+
+    # Build kwargs, only passing mamba_type to mamba-aware models
+    kwargs = {'in_channels': 1, 'num_classes': 4}
+    extra = meta.get('extra_kwargs') or {}
+    if extra:
+        kwargs.update(extra)
+    if mamba_type and ('mamba' in model_name.lower() or 'pure_mamba' in model_name.lower()):
+        kwargs['mamba_type'] = mamba_type
+
+    model = get_model(model_name, **kwargs)
+    model.load_state_dict(state_dict)
     model = model.to(device)
     model.eval()
-    
+
     return model
 
 
@@ -397,7 +456,8 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     
     print(f"Loading model from {args.checkpoint}...")
-    model = load_model(args.checkpoint, args.model, args.device)
+    model = load_model(args.checkpoint, args.model, args.device,
+                       mamba_type=getattr(args, 'mamba_type', None))
     print("Model loaded successfully")
     
     # Get images to process
