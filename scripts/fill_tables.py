@@ -167,6 +167,26 @@ def _texttt(name: str) -> str:
     return r"\texttt{" + name.replace("_", r"\_") + "}"
 
 
+# benchmark.py registers UNet-V1 under the canonical alias 'unet' (and the
+# Mamba variants as 'mamba_unet_*' rather than 'mamba_unet_v1_*'), so the
+# efficiency CSV keys do not match the evaluation keys for that one model.
+_BENCH_ALIAS = {
+    "unet_v1": "unet",
+    "mamba_unet_v1_mamba": "mamba_unet_mamba",
+    "mamba_unet_v1_mamba2": "mamba_unet_mamba2",
+    "mamba_unet_v1_vmamba": "mamba_unet_vmamba",
+}
+
+
+def _bench(bench: Dict[str, Dict], key: str) -> Dict:
+    """Look up a model in the benchmark CSV, trying known name aliases."""
+    if key in bench:
+        return bench[key]
+    if key in _BENCH_ALIAS and _BENCH_ALIAS[key] in bench:
+        return bench[_BENCH_ALIAS[key]]
+    return {}
+
+
 # ---------------------------------------------------------------------------
 # Display name mapping
 # ---------------------------------------------------------------------------
@@ -411,14 +431,14 @@ def gen_p1_t6_efficiency(results: Dict[str, Dict], bench: Dict[str, Dict]) -> st
     rows = []
     for key, disp in P1_BASE_DISPLAY.items():
         r = results.get(key)
-        b = bench.get(key) or bench.get(disp.lower().replace('-', '_').replace('+', ''))
+        b = _bench(bench, key)
         if not r:
             continue
         rows.append((disp,
                      float(_get(r, "params_M", default=0)),
-                     (b or {}).get("flops_G"),
-                     (b or {}).get("latency_ms"),
-                     (b or {}).get("memory_MB")))
+                     b.get("flops_G"),
+                     b.get("latency_ms"),
+                     b.get("memory_MB")))
     rows.sort(key=lambda x: x[1])
     body = []
     for disp, p, f, t, m in rows:
@@ -523,16 +543,32 @@ def gen_p1_t7_wilcoxon(results: Dict[str, Dict],
 # Paper 2 — Mamba tables
 # ---------------------------------------------------------------------------
 
+# Nice display names for base architectures in the Paper 2 leaderboard.
+P2_BASE_DISPLAY = {
+    "unet_v1": "UNet-V1", "unet_v2": "UNet-V2", "unet_resnet": "UNet-ResNet",
+    "deeplab_v3": "DeepLabV3+", "nnunet": "nnU-Net",
+    "dense_context_unet": "DenseContextU-Net", "fpn": "FPN-UNet",
+    "swin_unet": "Swin-UNet", "transunet": "TransUNet",
+}
+
+
 def _classify(name: str) -> Tuple[str, str]:
-    """Return (group_label, ssm_variant) for a model name."""
+    """Return (group_label, ssm_variant) for a model name.
+
+    Parameter-matched widened baselines (``*_wide``) are tagged ``wide`` so
+    the leaderboard can drop them -- they belong only in the param-matched
+    table T7, not the main results leaderboard.
+    """
     n = name.lower()
+    if n.endswith("_wide"):
+        return ("Parameter-matched widened (see T7)", "wide")
     if n.endswith("_vmamba"):
         return ("VMamba/SS2D variants (4-directional 2D cross-scan)", "vmamba")
     if n.endswith("_mamba2"):
         return ("Mamba-2/SSD variants (chunked scan, Triton)", "mamba2")
     if n.endswith("_mamba"):
         return ("Mamba/S6 variants (1D selective scan)", "mamba")
-    return ("Base architectures", "base")
+    return ("Base architectures (no SSM)", "base")
 
 
 def gen_p2_t2_leaderboard(results: Dict[str, Dict]) -> str:
@@ -543,8 +579,9 @@ def gen_p2_t2_leaderboard(results: Dict[str, Dict]) -> str:
     }
     for name, r in results.items():
         _, variant = _classify(name)
-        # only models with a Dice number
-        if r.get("dice_mean") is None:
+        # drop param-matched _wide baselines from the leaderboard (they are
+        # reported only in T7), and skip anything without a Dice number
+        if variant == "wide" or r.get("dice_mean") is None:
             continue
         groups[variant].append((name, r))
 
@@ -603,7 +640,7 @@ def gen_p2_t2_leaderboard(results: Dict[str, Dict]) -> str:
             efr = ef.get("ef_correlation")
             params = r.get("params_M", "")
             params_s = f"{params:>5.1f}" if isinstance(params, (int, float)) else "  ---"
-            display = name if key == "base" else _texttt(name)
+            display = P2_BASE_DISPLAY.get(name, name) if key == "base" else _texttt(name)
             d_c   = cell(d, dice_b, dice_2, ".4f", "max")
             hd_c  = cell(hd, hd_b, hd_2, ".2f", "min")
             ef_c  = cell(mae, efm_b, efm_2, ".2f", "min")
@@ -699,13 +736,14 @@ def gen_p2_t5_variants(results: Dict[str, Dict]) -> str:
 def gen_p2_t8_efficiency(bench: Dict[str, Dict], results: Dict[str, Dict],
                          top_n: int = 12) -> str:
     """Efficiency profile for top-N models from the leaderboard plus best base."""
-    # Sort all models by Dice
+    # Sort all models by Dice, excluding param-matched _wide baselines
     ranked = sorted(((n, r) for n, r in results.items()
-                     if r.get("dice_mean", 0) > 0.5),
+                     if r.get("dice_mean", 0) > 0.5
+                     and _classify(n)[1] != "wide"),
                     key=lambda x: -x[1]["dice_mean"])[:top_n]
     body = []
     for name, r in ranked:
-        b = bench.get(name) or {}
+        b = _bench(bench, name)
         params = float(_get(r, "params_M", default=0))
         body.append(
             f"{_texttt(name)} & {params:>5.1f} & {_fmt(b.get('flops_G'),'.1f')} & "
