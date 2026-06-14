@@ -77,29 +77,42 @@ def find_eval_jsons(results_root: Path) -> Dict[str, Path]:
 
 
 def load_all_results(results_root: Path) -> Dict[str, Dict]:
-    """Return ``{model_display_name: per_model_dict}`` merged across groups.
+    """Return ``{model_name: per_model_dict}`` merged across result groups.
 
-    When the same display name appears in multiple groups (e.g. ``nnunet``
-    re-trained inside param_matched), the *most recent* file wins. The
-    function prints a one-line conflict notice so you can decide whether to
-    rename.
+    IMPORTANT: the ``param_matched`` session re-trains the base models in a
+    separate run purely to provide a within-session reference for the widened
+    (``*_wide``) baselines. Those re-trained base models can differ from the
+    canonical ``base_models`` session by several Dice points due to
+    training variance, so we must NOT let them overwrite the canonical
+    numbers. We therefore take from ``param_matched`` ONLY the ``*_wide``
+    models; every other model comes from its canonical group
+    (``base_models`` / ``mamba_models`` / ``mamba2_models`` /
+    ``vmamba_models``).
     """
     merged: Dict[str, Dict] = {}
-    conflicts: List[str] = []
     for j in sorted(find_eval_jsons(results_root).values(),
                     key=lambda p: p.stat().st_mtime):
+        group = j.parent.parent.name
         with open(j) as f:
             data = json.load(f)
         for name, res in data.get("results", {}).items():
-            if name in merged and merged[name] != res:
-                conflicts.append(f"  {name}  ({merged[name].get('_group','?')} -> {j.parent.parent.name})")
-            res["_group"] = j.parent.parent.name
+            is_wide = name.lower().endswith("_wide")
+            if group == "param_matched" and not is_wide:
+                # skip param_matched re-trained base models (use canonical)
+                continue
+            res["_group"] = group
             merged[name] = res
-    if conflicts:
-        print("[fill_tables] Duplicate model names across groups, kept latest:")
-        for c in conflicts[:20]:
-            print(c)
     return merged
+
+
+def load_group_results(results_root: Path, group: str) -> Dict[str, Dict]:
+    """Return the per-model dict for a single result group (e.g.
+    ``param_matched``), without merging across sessions."""
+    for g, j in find_eval_jsons(results_root).items():
+        if g == group:
+            with open(j) as f:
+                return json.load(f).get("results", {})
+    return {}
 
 
 def load_benchmark_csv(path: Path) -> Dict[str, Dict]:
@@ -801,11 +814,20 @@ PARAMM_PAIRS = [
 ]
 
 
-def gen_p2_t7_param_matched(results: Dict[str, Dict]) -> str:
+def gen_p2_t7_param_matched(results: Dict[str, Dict],
+                            pm_results: Optional[Dict[str, Dict]] = None) -> str:
+    # For a clean within-session comparison, read the base AND wide rows from
+    # the param_matched session (pm_results); the Mamba row comes from the
+    # canonical session (results). Falls back to canonical if pm is absent.
+    pm = pm_results or {}
     body = []
     for base_k, wide_k, mamba_k, base_label, wide_label, mamba_label in PARAMM_PAIRS:
-        for k, lbl in [(base_k, base_label), (wide_k, wide_label), (mamba_k, mamba_label)]:
-            r = results.get(k)
+        sources = [
+            (base_k, base_label, pm.get(base_k) or results.get(base_k)),
+            (wide_k, wide_label, pm.get(wide_k) or results.get(wide_k)),
+            (mamba_k, mamba_label, results.get(mamba_k)),
+        ]
+        for k, lbl, r in sources:
             if not r:
                 body.append(f"{lbl:<60} & {{---}} & {{---}} & {{---}} & {{---}} \\\\")
                 continue
@@ -828,10 +850,10 @@ def gen_p2_t7_param_matched(results: Dict[str, Dict]) -> str:
         "%==============================================================================\n"
         "\\begin{table*}[t]\n"
         "\\centering\n"
-        "\\caption{Parameter-matched comparison: each Mamba-enhanced model is\n"
-        "compared against (i) its default base CNN and (ii) a widened version of the\n"
-        "base CNN. Swin-UNet and TransUNet excluded as their capacity is tied to\n"
-        "fixed pretrained encoders.}\n"
+        "\\caption{Parameter-matched comparison. The base and widened rows are\n"
+        "trained in the same dedicated session so their comparison is within-session;\n"
+        "the Mamba row is from the main session. Swin-UNet and TransUNet are excluded\n"
+        "as their capacity is tied to fixed pretrained encoders.}\n"
         "\\label{tab:parammatch}\n"
         "\\small\n"
         "\\setlength{\\tabcolsep}{4pt}\n"
@@ -843,6 +865,123 @@ def gen_p2_t7_param_matched(results: Dict[str, Dict]) -> str:
         "\\bottomrule\n"
         "\\end{tabular}\n"
         "\\end{table*}\n"
+    )
+
+
+def _top_configs(results: Dict[str, Dict], n: int = 10) -> List[Tuple[str, Dict]]:
+    """Top-n trained configs by Dice, excluding base and _wide models."""
+    cand = [(name, r) for name, r in results.items()
+            if r.get("dice_mean", 0) > 0.5
+            and _classify(name)[1] in ("mamba", "mamba2", "vmamba")]
+    cand.sort(key=lambda x: -x[1]["dice_mean"])
+    return cand[:n]
+
+
+def gen_p2_t3_perclass(results: Dict[str, Dict]) -> str:
+    """Per-class Dice for the top-10 configs plus best base (nnU-Net)."""
+    rows = _top_configs(results, 10)
+    # append nnU-Net as reference if present
+    if "nnunet" in results:
+        rows = rows + [("nnunet", results["nnunet"])]
+    le = [r.get("dice_lv_endocardium", 0) for _, r in rows]
+    lp = [r.get("dice_lv_epicardium", 0) for _, r in rows]
+    la = [r.get("dice_left_atrium", 0) for _, r in rows]
+    body = []
+    for i, (name, r) in enumerate(rows):
+        disp = P2_BASE_DISPLAY.get(name, _texttt(name))
+        e = _bold(f"{le[i]:.4f}") if le[i] == max(le) else f"{le[i]:.4f}"
+        p = _bold(f"{lp[i]:.4f}") if lp[i] == max(lp) else f"{lp[i]:.4f}"
+        a = _bold(f"{la[i]:.4f}") if la[i] == max(la) else f"{la[i]:.4f}"
+        sep = "\\midrule\n" if name == "nnunet" else ""
+        body.append(f"{sep}{disp} & {e} & {p} & {a} \\\\")
+    return (
+        "%==============================================================================\n"
+        "% Paper 2 / T3 -- per-class Dice (auto-generated)\n"
+        "%==============================================================================\n"
+        "\\begin{table}[t]\n\\centering\n"
+        "\\caption{Per-class Dice on CAMUS test for the top-10 configurations plus\n"
+        "the strongest base CNN (nnU-Net). Best per column in \\textbf{bold}.}\n"
+        "\\label{tab:perclass}\n\\small\n\\setlength{\\tabcolsep}{4pt}\n"
+        "\\begin{tabular}{l c c c}\n\\toprule\n"
+        "Model & {LV-endo} & {LV-epi} & {LA} \\\\\n\\midrule\n"
+        f"{chr(10).join(body)}\n"
+        "\\bottomrule\n\\end{tabular}\n\\end{table}\n"
+    )
+
+
+def gen_p2_t4_edes(results: Dict[str, Dict]) -> str:
+    """ED/ES-stratified Dice + HD95 for the top-10 configs."""
+    rows = _top_configs(results, 10)
+    body = []
+    for name, r in rows:
+        body.append(
+            f"{_texttt(name)} & {_fmt(r.get('dice_mean_ed'),'.4f')} & "
+            f"{_fmt(r.get('dice_mean_es'),'.4f')} & "
+            f"{_fmt(r.get('hd95_mean_ed'),'.2f')} & {_fmt(r.get('hd95_mean_es'),'.2f')} \\\\"
+        )
+    return (
+        "%==============================================================================\n"
+        "% Paper 2 / T4 -- ED/ES stratified (auto-generated)\n"
+        "%==============================================================================\n"
+        "\\begin{table}[t]\n\\centering\n"
+        "\\caption{ED- and ES-stratified mean Dice and HD95 (mm) for the top-10\n"
+        "configurations.}\n"
+        "\\label{tab:edes}\n\\small\n\\setlength{\\tabcolsep}{4pt}\n"
+        "\\begin{tabular}{l c c c c}\n\\toprule\n"
+        "\\multirow{2}{*}{Model} & \\multicolumn{2}{c}{Dice} & \\multicolumn{2}{c}{HD95 (mm)} \\\\\n"
+        "                       & {ED}   & {ES}   & {ED}   & {ES}   \\\\\n\\midrule\n"
+        f"{chr(10).join(body)}\n"
+        "\\bottomrule\n\\end{tabular}\n\\end{table}\n"
+    )
+
+
+def gen_p2_t9_wilcoxon(results: Dict[str, Dict]) -> str:
+    """Wilcoxon corrected-p among the top-10 configs (computed from per-sample Dice)."""
+    try:
+        import numpy as np
+        from scipy import stats
+    except ImportError:
+        return "% T9 needs scipy; install and re-run fill_tables.py\n"
+    rows = [(n, r) for n, r in _top_configs(results, 10)
+            if r.get("per_sample_dice")]
+    if len(rows) < 3:
+        return "% T9: insufficient per-sample Dice\n"
+    n_common = min(len(r["per_sample_dice"]) for _, r in rows)
+    names = [n for n, _ in rows]
+    arrs = {n: np.asarray(r["per_sample_dice"][:n_common]) for n, r in rows}
+    pairs = len(names) * (len(names) - 1) // 2
+    sig = []
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            a, b = names[i], names[j]
+            try:
+                _, p = stats.wilcoxon(arrs[a], arrs[b])
+            except ValueError:
+                p = 1.0
+            pc = min(1.0, p * pairs)
+            if pc < 0.05:
+                d = float(arrs[a].mean() - arrs[b].mean())
+                sig.append((a, b, pc, d))
+    sig.sort(key=lambda x: x[2])
+    body = []
+    for a, b, pc, d in sig[:18]:
+        body.append(f"{_texttt(a)} vs.\\ {_texttt(b)} & {pc:.1e} & {d:+.4f} \\\\")
+    if not body:
+        body = ["\\multicolumn{3}{l}{No pairs significant at $p<0.05$ after Bonferroni.} \\\\"]
+    return (
+        "%==============================================================================\n"
+        "% Paper 2 / T9 -- Wilcoxon among top-10 (auto-generated)\n"
+        "%==============================================================================\n"
+        "\\begin{table}[t]\n\\centering\n"
+        "\\caption{Statistically significant pairwise differences among the top-10\n"
+        "configurations (Wilcoxon signed-rank on per-sample Dice, Bonferroni-corrected\n"
+        f"over $\\binom{{10}}{{2}}={pairs}$ pairs). $\\Delta$ is the mean per-sample\n"
+        "Dice difference. Pairs not shown are not significant.}\n"
+        "\\label{tab:wilcoxon}\n\\small\n\\setlength{\\tabcolsep}{5pt}\n"
+        "\\begin{tabular}{l c c}\n\\toprule\n"
+        "Pair & Corrected $p$ & $\\Delta$ Dice \\\\\n\\midrule\n"
+        f"{chr(10).join(body)}\n"
+        "\\bottomrule\n\\end{tabular}\n\\end{table}\n"
     )
 
 
@@ -890,9 +1029,14 @@ def main():
     }
     p2_tables = {
         "T2_main_leaderboard.tex": gen_p2_t2_leaderboard(results),
+        "T3_perclass.tex":         gen_p2_t3_perclass(results),
+        "T4_edes.tex":             gen_p2_t4_edes(results),
         "T5_variants.tex":         gen_p2_t5_variants(results),
-        "T7_param_matched.tex":    gen_p2_t7_param_matched(results),
+        "T7_param_matched.tex":    gen_p2_t7_param_matched(
+                                       results,
+                                       load_group_results(args.results_root, "param_matched")),
         "T8_efficiency.tex":       gen_p2_t8_efficiency(bench, results),
+        "T9_wilcoxon.tex":         gen_p2_t9_wilcoxon(results),
     }
 
     def write_or_print(target_dir: Optional[Path], tables: Dict[str, str], tag: str):
