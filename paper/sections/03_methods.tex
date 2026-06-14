@@ -57,7 +57,7 @@ decoder, patch-expanding upsampling.
 A complete summary of architectural choices is given in
 Table~\ref{tab:archs}. We deliberately exclude all SSM-based variants
 (Mamba, Mamba-2, VMamba) from the present benchmark; those are the
-subject of a companion study (\PLACE{cite Paper 2 once arxived}).
+subject of a companion study.
 
 \input{tables/T0_archs}
 
@@ -121,9 +121,9 @@ which is informative because ED frames tend to be larger and have clearer
 endocardial boundaries.
 
 \paragraph{Quality-stratified robustness.}
-We report mean Dice within each CAMUS image-quality grade (Good /
-Medium / Poor) \PLACE{\TODO{generate per-quality-grade subsets from
-patient metadata}}.
+Each CAMUS patient carries an expert-assigned image-quality grade
+(Good / Medium / Poor). A quality-stratified robustness breakdown is
+deferred to the extended version of this work.
 
 \paragraph{Statistical significance.}
 For every pair of models we run a Wilcoxon signed-rank test on per-sample

@@ -39,3 +39,12 @@ papers/**/*.synctex.gz
 papers/**/*.fls
 papers/**/*.fdb_latexmk
 papers/**/_minted*/
+
+# LaTeX build artefacts inside paper directories
+paper/**/*.aux
+paper/**/*.bbl
+paper/**/*.blg
+paper/**/*.out
+paper/**/*.fls
+paper/**/*.fdb_latexmk
+paper/**/*.synctex.gz

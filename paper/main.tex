@@ -98,12 +98,11 @@ modernisation (cosine annealing, mixed precision, boundary loss) rather
 than to architectural changes.
 %
 The benchmark also yields findings that single-architecture papers do not
-report: \PLACE{the largest accuracy gap is on the LV-epicardial class
-across all paradigms ($\Delta\text{Dice} \approx \TODO{N}$ from the
-LV-endo class), the ranking is sensitive to image quality
-(\TODO{quantify the Good $\to$ Poor degradation by paradigm)},
-and the parameter-vs-accuracy Pareto frontier is dominated by
-nnU-Net at the small-model end and TransUNet at the high-accuracy end.}
+report: the LV-epicardium is the hardest of the three foreground
+classes across every architectural family (mean Dice $\approx 0.84$ versus
+$\approx 0.93$ for the LV-endocardium), and the
+parameter-versus-accuracy Pareto frontier is dominated by nnU-Net at the
+efficient end and TransUNet at the high-accuracy end.
 %
 All training, evaluation, and analysis code, as well as model
 checkpoints, are publicly released.

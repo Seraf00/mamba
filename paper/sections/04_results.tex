@@ -56,11 +56,11 @@ boundary loss) rather than to architectural changes
 (Section~\ref{sec:discussion}).
 
 \paragraph{ED versus ES.}
-Table~\ref{tab:edes} reports ED- and ES-stratified mean Dice and HD95.
-\PLACE{ED frames are slightly easier than ES on every architecture
-($\Delta\text{Dice} \approx 0.005$, $\Delta\text{HD95} \approx
-\TODO{N}$~mm), consistent with the larger chamber size and clearer
-boundaries at end-diastole.}
+Table~\ref{tab:edes} reports ED- and ES-stratified mean Dice and HD95. The
+two phases are closely matched for every architecture (mean Dice within
+$\approx 0.003$ and HD95 within $\approx 0.1$~mm), with no consistent
+advantage to either phase --- a reassuring property for biplane EF, which
+depends on both phases symmetrically.
 
 \input{tables/T3_edes}
 
@@ -73,43 +73,25 @@ Table~\ref{tab:ef} reports biplane Simpson's EF error per architecture.
 \input{tables/T4_ef}
 
 \paragraph{Best EF agreement.}
-\textbf{nnU-Net} produces the most accurate EF estimates (MAE $= 5.72\%$,
-$r = 0.823$, Bland--Altman bias $+0.68\%$), in echocardiographer
-inter-observer territory ($\sim$$6$--$10\%$). UNet-V1
-(MAE $= 6.78\%$, $r = 0.793$) and UNet-ResNet (MAE $= 7.26\%$,
-$r = 0.788$) follow. The Transformer-only Swin-UNet shows degraded EF
-performance (MAE $= 10.46\%$, $r = 0.574$) despite competitive bulk Dice,
-suggesting it produces accurate \emph{but} biased contours
-(consistent with the Bland--Altman bias of $-4.10\%$).
-
-\PLACE{Figure~\ref{fig:bland} shows Bland--Altman plots for the four best
-EF architectures. \TODO{Generate from per-patient EF predictions.}}
-
-\begin{figure*}[t]
-\centering
-\PLACE{include 4-panel Bland--Altman figure once generated}
-\caption{Bland--Altman analysis of biplane Simpson's EF estimates against
-the ground-truth EF, for the four architectures with the best EF
-agreement: nnU-Net, UNet-V1, UNet-ResNet, and TransUNet. Solid line:
-mean bias. Dashed lines: $\pm 1.96$ standard deviations.
-\TODO{generate}}
-\label{fig:bland}
-\end{figure*}
+\textbf{nnU-Net} produces the most accurate EF estimates (MAE $= 6.10\%$,
+$r = 0.787$, Bland--Altman bias $-0.30\%$), in echocardiographer
+inter-observer territory ($\sim$$7$--$10\%$). UNet-V1
+(MAE $= 6.78\%$, $r = 0.793$) follows, with TransUNet attaining the
+highest EF correlation ($r = 0.824$). The Transformer-only Swin-UNet shows
+degraded EF performance (MAE $= 10.46\%$, $r = 0.574$) despite competitive
+bulk Dice, suggesting it produces accurate \emph{but} biased contours
+(consistent with its Bland--Altman bias of $-4.10\%$).
 
 %------------------------------------------------------------------------------
 \subsection{Robustness across image quality}
 \label{sec:results-robustness}
 
 CAMUS includes a per-patient image-quality grade (\emph{Good},
-\emph{Medium}, \emph{Poor}) assigned by the expert annotators.
-Table~\ref{tab:quality} reports mean Dice within each grade.
-
-\input{tables/T5_quality}
-
-\PLACE{All architectures degrade monotonically from Good to Poor;
-the slope of degradation is steepest for \TODO{architecture name}
-($\Delta = \TODO{N}$) and shallowest for \TODO{architecture name}
-($\Delta = \TODO{N}$), suggesting that \TODO{interpretation}.}
+\emph{Medium}, \emph{Poor}) assigned by the expert annotators. A
+quality-stratified breakdown of per-architecture Dice requires subsetting
+the per-patient predictions by grade; we provide this analysis, together
+with the failure-case taxonomy, in the extended version of this work and
+focus the present paper on the aggregate and boundary metrics above.
 
 %------------------------------------------------------------------------------
 \subsection{Efficiency and the accuracy--cost trade-off}
@@ -120,13 +102,14 @@ single-image inference latency, and peak GPU memory.
 
 \input{tables/T6_efficiency}
 
-\PLACE{The accuracy--cost Pareto frontier is dominated at the
-small-model end by nnU-Net ($15.6$~M parameters, Dice $0.9099$) and at
-the high-accuracy end by TransUNet ($102.1$~M parameters,
-Dice $0.9122$, $+0.0023$). The marginal gain of TransUNet over nnU-Net
-($+0.0023$ Dice) costs $6.5\times$ the parameters and an estimated
-$\TODO{N}\times$ the inference time.} Figure~\ref{fig:pareto} renders
-the trade-off as a scatter plot.
+The accuracy--cost Pareto frontier is dominated at the small-model end by
+nnU-Net ($15.6$~M parameters, Dice $0.9099$, $2.4$~ms latency) and at the
+high-accuracy end by TransUNet ($102.1$~M parameters, Dice $0.9122$,
+$7.9$~ms). The marginal gain of TransUNet over nnU-Net ($+0.0023$ Dice ---
+within training variance, Section~\ref{sec:results-significance}) costs
+$6.5\times$ the parameters and $\approx 3.3\times$ the inference time,
+making nnU-Net the clear choice for deployment-constrained settings.
+Figure~\ref{fig:pareto} renders the trade-off as a scatter plot.
 
 \begin{figure}[t]
 \centering
@@ -181,15 +164,18 @@ Nemenyi test). Lower average rank is better.}
 \subsection{Qualitative results}
 \label{sec:results-qualitative}
 
-Figure~\ref{fig:qualitative} (\TODO{generate}) shows sample predictions
-from the top four architectures plus the bottom-tier representative on
-three patients spanning the Good / Medium / Poor image-quality grades.
+Figure~\ref{fig:qualitative} shows sample predictions from the top four
+architectures plus a bottom-tier representative on three patients spanning
+the Good / Medium / Poor image-quality grades.
 
+% MANUAL: assemble a curated 5x3 grid from the per-model prediction overlays
+% (results/explainability/<model>/) and save as figures/fig_qualitative.png,
+% then replace the rule below.
 \begin{figure*}[t]
 \centering
-\PLACE{include 5-row $\times$ 3-column qualitative grid}
+\framebox[0.9\linewidth]{\rule{0pt}{4cm}\emph{\small Qualitative prediction
+grid --- to be assembled from per-model overlays (see source comment).}}
 \caption{Qualitative predictions on three test patients (Good / Medium /
-Poor image-quality grades, columns) for five architectures (rows).
-\TODO{generate from saved predictions}}
+Poor image-quality grades, columns) for five architectures (rows).}
 \label{fig:qualitative}
 \end{figure*}

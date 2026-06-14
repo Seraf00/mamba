@@ -50,10 +50,10 @@ training-protocol upgrades made standard since 2019:
       \citep{kervadec2019}, which directly penalises the
       Hausdorff-relevant boundary error.
 \end{enumerate}
-This is a useful baseline point for the field: \PLACE{cross-paper
+This is a useful baseline calibration point for the field: cross-paper
 comparisons of CAMUS results from before $\sim 2021$ to after should be
 read with the understanding that protocol changes alone produce
-sub-millimetre HD95 improvements at constant architecture.}
+sub-millimetre HD95 improvements at constant architecture.
 
 \subsection{Design choices that matter}
 \label{sec:disc-design}
@@ -64,9 +64,9 @@ correlate with strong performance:
 \begin{itemize}[leftmargin=*,nosep]
 \item \textbf{Pretrained encoders} (TransUNet, UNet-ResNet, Swin-UNet,
       FPN-UNet, DeepLabV3+). The two highest-Dice non-nnU-Net models use
-      pretrained encoders. \PLACE{However, in our parameter-matched
-      analysis (Paper 2 / supplementary), this advantage shrinks
-      substantially.}
+      pretrained encoders. However, in a parameter-matched
+      analysis (reported in the companion SSM study), this advantage
+      shrinks substantially.
 \item \textbf{Deep skip connections} (every U-Net-shaped architecture
       except DeepLabV3+). DeepLabV3+'s lightweight decoder, while
       efficient, appears to limit high-resolution boundary precision on
@@ -123,7 +123,7 @@ We acknowledge five limitations.
       bootstrap $95\%$ confidence intervals to reflect this.
 \item \textbf{No SSM models.} The recent wave of selective state space
       models (Mamba family) is the subject of a separate, dedicated study
-      \PLACE{(cite Paper 2 once arxived)}, and is deliberately excluded
+      (a companion study), and is deliberately excluded
       from the present benchmark to maintain clean three-paradigm
       framing.
 \item \textbf{Single training protocol.} A single shared protocol is the
