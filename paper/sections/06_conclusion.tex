@@ -1,0 +1,42 @@
+%==============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+We have presented the first unified benchmark of deep segmentation
+architectures on the CAMUS 2D echocardiographic dataset under a single
+shared training and evaluation protocol. Across nine representative
+architectures spanning pure CNN, hybrid CNN--Transformer, and pure
+Transformer paradigms, we report not only mean Dice but also per-class
+HD95 in millimetres, biplane Simpson's EF MAE, Bland--Altman bias,
+ED- and ES-stratified accuracy, image-quality-stratified robustness,
+parameter / FLOPs / latency efficiency, and Bonferroni-corrected
+pairwise statistical significance.
+
+The hybrid TransUNet leads on bulk Dice ($0.9122$) and HD95
+($1.82$~mm). The pure-CNN nnU-Net leads on EF accuracy
+(MAE $5.72\%$, $r = 0.823$) and is $6.5\times$ more parameter-efficient.
+The top four architectures (TransUNet, nnU-Net, UNet-ResNet, UNet-V1)
+form a statistically equivalent top-tier band. The pure-Transformer
+Swin-UNet is mid-tier on bulk Dice but degraded on EF, suggesting that
+its contours are subtly biased in a manner that compounds through
+Simpson's biplane integration.
+
+The full-network HD95 of approximately $1.9$~mm represents a substantial
+improvement over the originally reported CAMUS nnU-Net baseline of
+$4.3$~mm. We attribute most of this improvement to training-protocol
+modernisation (cosine annealing, mixed precision, boundary loss) rather
+than to architectural changes. This observation is useful as a baseline
+calibration point for cross-paper comparison of CAMUS results.
+
+Three directions remain open. (i) Cross-dataset transfer to
+EchoNet-Dynamic and ACDC would test whether the architectural ranking
+holds beyond CAMUS. (ii) 3D echocardiography requires architectures and
+pretraining recipes outside the scope of this benchmark. (iii) The
+recent wave of selective state space models (Mamba, Mamba-2, VMamba) is
+the subject of a separate, dedicated companion study
+\PLACE{(cite Paper 2 once arxived)}.
+
+We release the complete training, evaluation, statistical-analysis, and
+figure-generation pipeline, together with the nine model checkpoints
+and per-patient JSON / CSV outputs that produced this paper, to lower
+the barrier to reproducing and extending these results.

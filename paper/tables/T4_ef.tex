@@ -1,0 +1,26 @@
+%==============================================================================
+% Paper 1 / T4 — EF metrics (auto-generated)
+%==============================================================================
+\begin{table}[t]
+\centering
+\caption{Biplane Simpson's ejection fraction (EF) metrics on the CAMUS
+test set. Best per column in \textbf{bold}.}
+\label{tab:ef}
+\small
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{l c c c}
+\toprule
+Architecture       & {MAE (\%)} & {$r$} & {Bias (\%)} \\
+\midrule
+nnU-Net            & \textbf{6.10} & 0.787 & -0.30 \\
+UNet-V1            & 6.78 & 0.793 & -0.74 \\
+TransUNet          & 7.30 & \textbf{0.824} & -3.74 \\
+UNet-V2            & 7.60 & 0.728 & -1.20 \\
+UNet-ResNet        & 7.60 & 0.775 & -2.84 \\
+DeepLabV3+         & 8.88 & 0.743 & -6.76 \\
+FPN-UNet           & 9.94 & 0.700 & -8.34 \\
+Swin-UNet          & 10.46 & 0.574 & -4.10 \\
+DenseContextU-Net  & 16.24 & 0.434 & -11.72 \\
+\bottomrule
+\end{tabular}
+\end{table}

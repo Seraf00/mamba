@@ -1,0 +1,28 @@
+%==============================================================================
+% Paper 1 / T2 — Boundary metrics in mm (auto-generated)
+%==============================================================================
+\begin{table}[t]
+\centering
+\caption{Boundary metrics on the CAMUS test split. HD95 is the
+95\textsuperscript{th}-percentile Hausdorff distance, ASSD is the average
+symmetric surface distance, both reported in millimetres using per-sample
+NIfTI pixel spacing. Best per column in \textbf{bold}.}
+\label{tab:boundary}
+\small
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{l c c}
+\toprule
+Architecture       & {HD95 (mm)} & {ASSD (mm)} \\
+\midrule
+TransUNet          & \textbf{1.82} & \textbf{0.36} \\
+UNet-ResNet        & 1.93 & 0.38 \\
+nnU-Net            & 1.93 & 0.37 \\
+Swin-UNet          & 2.01 & 0.39 \\
+UNet-V1            & 2.13 & 0.39 \\
+UNet-V2            & 2.33 & 0.44 \\
+DeepLabV3+         & 2.80 & 0.59 \\
+FPN-UNet           & 2.87 & 0.57 \\
+DenseContextU-Net  & 3.78 & 0.69 \\
+\bottomrule
+\end{tabular}
+\end{table}

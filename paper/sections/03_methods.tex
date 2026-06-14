@@ -1,0 +1,149 @@
+%==============================================================================
+\section{Materials and Methods}
+\label{sec:methods}
+
+\subsection{Dataset and splits}
+\label{sec:methods-data}
+
+We use the CAMUS dataset \citep{leclerc2019}, comprising 500 patients
+imaged in apical-2-chamber (2CH) and apical-4-chamber (4CH) views, with
+expert annotations at end-diastole (ED) and end-systole (ES). Each frame
+is labelled with four classes: background, LV-endocardium, LV-epicardium,
+and left atrium. Per-patient pixel spacing is recorded in the NIfTI
+header and ranges between approximately $0.30$ and $0.42$~mm.
+
+We adopt the official CAMUS split: $400$ patients for training,
+$50$ for validation, and $50$ for testing, with no overlap. After
+ED+ES frame extraction this yields approximately $1{,}600$ training,
+$200$ validation, and $200$ test images. Half-cycle sequences are
+optionally used for augmentation during training; results are reported
+on the canonical ED+ES test set only.
+
+\subsection{Architectures}
+\label{sec:methods-archs}
+
+We benchmark nine representative architectures spanning three paradigms:
+
+\paragraph{Pure CNN (seven architectures).}
+\begin{itemize}[leftmargin=*,nosep]
+\item \textbf{UNet-V1} \citep{ronneberger2015}: canonical encoder--decoder
+      with skip connections and trainable transposed-convolution
+      upsampling.
+\item \textbf{UNet-V2} (custom): residual blocks, squeeze-and-excitation
+      \citep{hu2018}, attention-gated skips \citep{oktay2018}, and
+      optional deep supervision.
+\item \textbf{UNet-ResNet}: U-Net with a ResNet-34 encoder
+      \citep{he2016} pretrained on ImageNet.
+\item \textbf{DeepLabV3+} \citep{chen2018encoder}: ResNet-50 encoder,
+      atrous spatial pyramid pooling bottleneck, lightweight decoder.
+\item \textbf{nnU-Net} \citep{isensee2021}: auto-configured U-Net
+      variant, trained from scratch.
+\item \textbf{DenseContextU-Net} (custom): dense blocks
+      \citep{huang2017} with a global-context module in the bottleneck.
+\item \textbf{FPN-UNet}: U-Net decoder with a Feature Pyramid
+      \citep{lin2017} neck over a ResNet-50 encoder.
+\end{itemize}
+
+\paragraph{Hybrid CNN--Transformer (one architecture).}
+\textbf{TransUNet} \citep{chen2021transunet}: ResNetV2-BiT encoder
+\citep{kolesnikov2020} feeding a ViT-B/16 bottleneck, with a cascaded
+upsampler decoder using skip connections from encoder stages.
+
+\paragraph{Pure Transformer (one architecture).}
+\textbf{Swin-UNet} \citep{cao2022}: Swin-Tiny encoder
+\citep{liu2021swin} pretrained on ImageNet-1k, symmetric Transformer
+decoder, patch-expanding upsampling.
+
+A complete summary of architectural choices is given in
+Table~\ref{tab:archs}. We deliberately exclude all SSM-based variants
+(Mamba, Mamba-2, VMamba) from the present benchmark; those are the
+subject of a companion study (\PLACE{cite Paper 2 once arxived}).
+
+\input{tables/T0_archs}
+
+\subsection{Training protocol}
+\label{sec:methods-training}
+
+All nine architectures share a single training protocol:
+\begin{itemize}[leftmargin=*,nosep]
+\item AdamW optimiser ($\beta_1{=}0.9$, $\beta_2{=}0.999$,
+      weight decay $10^{-4}$), initial learning rate $10^{-4}$, cosine
+      annealing with warm restarts ($T_0{=}50$ epochs).
+\item Composite loss: $\mathcal{L} = \mathcal{L}_{\text{CE}}
+      + \mathcal{L}_{\text{Dice}} + 0.1\, \mathcal{L}_{\text{boundary}}$,
+      where the boundary term is computed on the signed distance
+      transform \citep{kervadec2019}.
+\item Image size $256\times 256$ for all CNN and hybrid models;
+      $224\times 224$ for Swin-UNet, which requires input divisible by
+      $\text{window\_size}\times 2^{n_\text{stages}} = 7\times 32 = 224$.
+\item Augmentation: horizontal flip, $\pm 10\deg$ rotation, small elastic
+      deformation, mild brightness/contrast jitter.
+\item Up to 100 epochs, automatic mixed precision (AMP, FP16), gradient
+      clipping at $\|\nabla\|_2 \le 1$ for pretrained-encoder models
+      (Swin-UNet, TransUNet) to prevent the early-epoch divergence we
+      otherwise observed.
+\item Early stopping with patience $20$ on validation mean Dice.
+\item Hardware: Google Colab Pro NVIDIA L4 (24~GB) and A100 (40~GB)
+      instances.
+\end{itemize}
+
+Per-model batch sizes are reported in Table~\ref{tab:archs} and were
+selected to maximise GPU utilisation within memory limits. We did
+\emph{not} perform per-architecture hyperparameter search: the goal is
+explicit cross-architecture comparison under one shared protocol.
+
+\subsection{Evaluation metrics}
+\label{sec:methods-metrics}
+
+We report a multi-dimensional set of metrics:
+
+\paragraph{Geometric.}
+Per-class Dice and Intersection-over-Union (IoU) for LV-endo, LV-epi,
+and LA, computed on the full test set and separately for ED and ES
+frames.
+
+\paragraph{Boundary.}
+95\textsuperscript{th}-percentile Hausdorff distance (HD95) and average
+symmetric surface distance (ASSD), both in \emph{millimetres} using the
+per-sample pixel spacing recorded in NIfTI headers. This is consistent
+with the official CAMUS challenge protocol and is essential for
+cross-paper comparison.
+
+\paragraph{Clinical.}
+Biplane Simpson's ejection fraction (EF) computed from the LV-endo
+masks at ED and ES across paired 2CH and 4CH views. We report
+EF MAE (\%), Pearson correlation $r$ with the ground-truth EF, and
+Bland--Altman bias and 95\% limits of agreement \citep{bland1986}.
+
+\paragraph{Phase-stratified.}
+All metrics are additionally reported separately for ED and ES frames,
+which is informative because ED frames tend to be larger and have clearer
+endocardial boundaries.
+
+\paragraph{Quality-stratified robustness.}
+We report mean Dice within each CAMUS image-quality grade (Good /
+Medium / Poor) \PLACE{\TODO{generate per-quality-grade subsets from
+patient metadata}}.
+
+\paragraph{Statistical significance.}
+For every pair of models we run a Wilcoxon signed-rank test on per-sample
+mean Dice across the test set, with Bonferroni correction across the
+$\binom{9}{2} = 36$ pairs. We additionally produce a critical-difference
+diagram \citep{demsar2006} illustrating the band of statistically
+equivalent top models.
+
+\paragraph{Efficiency.}
+Trainable parameters, GFLOPs at $256\times 256$ input (measured with
+\texttt{fvcore} on CUDA), single-image inference latency
+(mean over $100$ forward passes after $10$ warmup, batch size $1$, FP16),
+and peak GPU memory during forward+backward.
+
+\subsection{Reproducibility}
+\label{sec:methods-repro}
+
+A single shared evaluation pipeline is used for all models; the same code
+path generates the JSON outputs, CSV tables, LaTeX tables, and the
+figures in this paper. The training pipeline fixes the random seed
+($42$) across PyTorch, NumPy, and Python. Per-model checkpoints, per-test-
+patient prediction NIfTI files, and per-sample Dice arrays are released
+to allow independent re-analysis without re-running training.

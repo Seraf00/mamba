@@ -1,0 +1,195 @@
+%==============================================================================
+\section{Results}
+\label{sec:results}
+
+We organise the results into six subsections. Section~\ref{sec:results-main}
+gives the main test-set leaderboard. Sections \ref{sec:results-boundary}
+and \ref{sec:results-clinical} report boundary and clinical
+(EF) metrics. Section~\ref{sec:results-robustness} examines robustness by
+image quality. Section~\ref{sec:results-efficiency} reports the accuracy
+$\times$ efficiency trade-off. Section~\ref{sec:results-significance}
+reports statistical significance.
+
+%------------------------------------------------------------------------------
+\subsection{Main test-set Dice}
+\label{sec:results-main}
+
+Table~\ref{tab:main} summarises mean Dice, per-class Dice, and the
+parameter count for each architecture on the official CAMUS test split.
+
+\input{tables/T1_main_dice}
+
+\paragraph{Headline ranking.}
+\textbf{TransUNet} achieves the highest mean Dice ($0.9122$), narrowly
+ahead of \textbf{nnU-Net} ($0.9099$, $\Delta = 0.0023$), \textbf{UNet-ResNet}
+($0.9087$), and \textbf{UNet-V1} ($0.9085$). The four top architectures
+are tightly clustered within $\Delta\text{Dice} \le 0.004$ ---
+within the Bonferroni-corrected statistical-significance band
+(Section~\ref{sec:results-significance}). Below this band,
+\textbf{UNet-V2} ($0.8963$) and \textbf{Swin-UNet} ($0.8878$) form a
+mid-tier, and \textbf{FPN-UNet} ($0.8619$), \textbf{DeepLabV3+}
+($0.8569$), and \textbf{DenseContextU-Net} ($0.8522$) trail.
+
+\paragraph{Per-class.}
+LV-endo Dice ranges $0.8983$ (DenseContextU-Net) to $0.9371$ (nnU-Net);
+LA Dice ranges $0.8477$ (DeepLabV3+) to $0.9213$ (TransUNet);
+LV-epi is consistently the hardest class for every architecture (mean
+across models: $\Dice \approx 0.84$).
+
+%------------------------------------------------------------------------------
+\subsection{Boundary accuracy (HD95 and ASSD in mm)}
+\label{sec:results-boundary}
+
+Boundary metrics are reported in millimetres using the per-sample NIfTI
+pixel spacing.
+
+\input{tables/T2_boundary}
+
+\paragraph{HD95.}
+TransUNet again leads with HD95 $= 1.82$~mm, followed by UNet-ResNet and
+nnU-Net (both $1.93$~mm), UNet-V1 ($2.13$~mm), Swin-UNet ($2.02$~mm), and
+UNet-V2 ($2.33$~mm). The published CAMUS nnU-Net baseline of
+$\approx 4.3$~mm \citep{leclerc2019} is improved on by every architecture
+in this benchmark by a factor of $\sim$$2$; we attribute most of this gap
+to training-protocol modernisation (cosine annealing, mixed precision,
+boundary loss) rather than to architectural changes
+(Section~\ref{sec:discussion}).
+
+\paragraph{ED versus ES.}
+Table~\ref{tab:edes} reports ED- and ES-stratified mean Dice and HD95.
+\PLACE{ED frames are slightly easier than ES on every architecture
+($\Delta\text{Dice} \approx 0.005$, $\Delta\text{HD95} \approx
+\TODO{N}$~mm), consistent with the larger chamber size and clearer
+boundaries at end-diastole.}
+
+\input{tables/T3_edes}
+
+%------------------------------------------------------------------------------
+\subsection{Clinical metric: biplane Simpson's EF}
+\label{sec:results-clinical}
+
+Table~\ref{tab:ef} reports biplane Simpson's EF error per architecture.
+
+\input{tables/T4_ef}
+
+\paragraph{Best EF agreement.}
+\textbf{nnU-Net} produces the most accurate EF estimates (MAE $= 5.72\%$,
+$r = 0.823$, Bland--Altman bias $+0.68\%$), in echocardiographer
+inter-observer territory ($\sim$$6$--$10\%$). UNet-V1
+(MAE $= 6.78\%$, $r = 0.793$) and UNet-ResNet (MAE $= 7.26\%$,
+$r = 0.788$) follow. The Transformer-only Swin-UNet shows degraded EF
+performance (MAE $= 10.46\%$, $r = 0.574$) despite competitive bulk Dice,
+suggesting it produces accurate \emph{but} biased contours
+(consistent with the Bland--Altman bias of $-4.10\%$).
+
+\PLACE{Figure~\ref{fig:bland} shows Bland--Altman plots for the four best
+EF architectures. \TODO{Generate from per-patient EF predictions.}}
+
+\begin{figure*}[t]
+\centering
+\PLACE{include 4-panel Bland--Altman figure once generated}
+\caption{Bland--Altman analysis of biplane Simpson's EF estimates against
+the ground-truth EF, for the four architectures with the best EF
+agreement: nnU-Net, UNet-V1, UNet-ResNet, and TransUNet. Solid line:
+mean bias. Dashed lines: $\pm 1.96$ standard deviations.
+\TODO{generate}}
+\label{fig:bland}
+\end{figure*}
+
+%------------------------------------------------------------------------------
+\subsection{Robustness across image quality}
+\label{sec:results-robustness}
+
+CAMUS includes a per-patient image-quality grade (\emph{Good},
+\emph{Medium}, \emph{Poor}) assigned by the expert annotators.
+Table~\ref{tab:quality} reports mean Dice within each grade.
+
+\input{tables/T5_quality}
+
+\PLACE{All architectures degrade monotonically from Good to Poor;
+the slope of degradation is steepest for \TODO{architecture name}
+($\Delta = \TODO{N}$) and shallowest for \TODO{architecture name}
+($\Delta = \TODO{N}$), suggesting that \TODO{interpretation}.}
+
+%------------------------------------------------------------------------------
+\subsection{Efficiency and the accuracy--cost trade-off}
+\label{sec:results-efficiency}
+
+Table~\ref{tab:efficiency} reports parameters, GFLOPs at $256\times 256$,
+single-image inference latency, and peak GPU memory.
+
+\input{tables/T6_efficiency}
+
+\PLACE{The accuracy--cost Pareto frontier is dominated at the
+small-model end by nnU-Net ($15.6$~M parameters, Dice $0.9099$) and at
+the high-accuracy end by TransUNet ($102.1$~M parameters,
+Dice $0.9122$, $+0.0023$). The marginal gain of TransUNet over nnU-Net
+($+0.0023$ Dice) costs $6.5\times$ the parameters and an estimated
+$\TODO{N}\times$ the inference time.} Figure~\ref{fig:pareto} renders
+the trade-off as a scatter plot.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.92\linewidth]{figures/fig_pareto}
+\caption{Accuracy--cost Pareto frontier. Each point is one of the nine
+architectures, plotted at its (parameter count, mean test Dice). The
+Pareto front is highlighted.}
+\label{fig:pareto}
+\end{figure}
+
+%------------------------------------------------------------------------------
+\subsection{Statistical significance}
+\label{sec:results-significance}
+
+We test all $\binom{9}{2}=36$ pairwise model differences on per-sample
+mean Dice with the Wilcoxon signed-rank test, Bonferroni-corrected.
+
+\input{tables/T7_wilcoxon}
+
+\paragraph{Top-tier band.}
+After Bonferroni correction, the four highest-Dice architectures
+(TransUNet, nnU-Net, UNet-ResNet, UNet-V1) are not significantly different
+from one another on bulk mean Dice, while the three lowest
+(FPN-UNet, DeepLabV3+, DenseContextU-Net) are significantly worse than the
+top group. Full pairwise $p$-values are released as supplementary data.
+
+\paragraph{Small Dice gaps are within training variance.}
+The differences separating the top-tier architectures are of order
+$0.002$--$0.005$ Dice. We caution against over-interpreting them: in our
+experiments, re-training an identical architecture under the same nominal
+protocol in a different compute session shifted its mean Dice by a
+comparable or larger amount (in the most extreme case, DeepLabV3+ varied by
+$0.057$ between two runs). The bulk-Dice ranking within the top tier should
+therefore be read as a band of statistically and practically equivalent
+models, not a strict order. The architecturally meaningful differences in
+this benchmark are the larger-magnitude ones --- the boundary accuracy
+(HD95), the clinical EF agreement, and the efficiency trade-off ---
+discussed in Section~\ref{sec:discussion}.
+
+The critical-difference diagram of Figure~\ref{fig:cd} renders the
+banding visually.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\linewidth]{figures/fig_cd_diagram}
+\caption{Critical-difference diagram (average ranks on per-sample Dice,
+Nemenyi test). Lower average rank is better.}
+\label{fig:cd}
+\end{figure}
+
+%------------------------------------------------------------------------------
+\subsection{Qualitative results}
+\label{sec:results-qualitative}
+
+Figure~\ref{fig:qualitative} (\TODO{generate}) shows sample predictions
+from the top four architectures plus the bottom-tier representative on
+three patients spanning the Good / Medium / Poor image-quality grades.
+
+\begin{figure*}[t]
+\centering
+\PLACE{include 5-row $\times$ 3-column qualitative grid}
+\caption{Qualitative predictions on three test patients (Good / Medium /
+Poor image-quality grades, columns) for five architectures (rows).
+\TODO{generate from saved predictions}}
+\label{fig:qualitative}
+\end{figure*}

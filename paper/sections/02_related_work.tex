@@ -1,0 +1,94 @@
+%==============================================================================
+\section{Related Work}
+\label{sec:related}
+
+\subsection{Convolutional segmentation networks}
+\label{sec:related-cnn}
+
+U-Net \citep{ronneberger2015} established the encoder--decoder
+architecture with skip connections that remains the dominant template for
+medical image segmentation. Subsequent work has refined the encoder
+(residual blocks \citep{he2016}, ResNet
+\citep{he2016}, EfficientNet), the decoder
+(transposed convolution vs.\ bilinear upsampling, dense connections
+\citep{huang2017}), and the skip mechanism
+(attention gates \citep{oktay2018}, dense skips). Squeeze-and-excitation
+blocks \citep{hu2018} provide channel-wise recalibration. Atrous spatial
+pyramid pooling (ASPP) in DeepLabV3+ \citep{chen2018encoder} replaces the
+deep encoder with dilated convolutions to enlarge the receptive field
+without down-sampling. Feature Pyramid Networks
+\citep{lin2017} aggregate features across multiple scales for dense
+prediction.
+
+The nnU-Net framework \citep{isensee2021} integrates these architectural
+choices with automatic data-dependent hyperparameter selection (target
+spacing, patch size, batch size, augmentation pipeline) and has set
+strong baselines on numerous medical benchmarks including CAMUS.
+
+\subsection{Transformer-based segmentation networks}
+\label{sec:related-trans}
+
+Self-attention's quadratic complexity made global attention impractical
+for high-resolution images until Vision Transformers
+\citep{dosovitskiy2021} demonstrated patch-based tokenisation. TransUNet
+\citep{chen2021transunet} was the first work to bring this design to
+medical segmentation, combining a CNN encoder (typically ResNetV2-BiT
+\citep{kolesnikov2020}) with a ViT-B/16 bottleneck and a cascaded
+upsampler decoder. The hybrid design retains the inductive bias of
+convolutions at high resolution while granting global context at the
+bottleneck.
+
+Swin Transformer \citep{liu2021swin} introduced windowed self-attention
+with shifted windows, restoring linear complexity in image size. Swin-UNet
+\citep{cao2022} adapts this to segmentation with a fully Transformer-based
+U-Net. SwinV2 \citep{liu2022swinv2} and Swin-MAE
+\citep{baochen2023swinmae} further refine pretraining strategies.
+
+\subsection{Echocardiographic segmentation and CAMUS}
+\label{sec:related-camus}
+
+The CAMUS dataset \citep{leclerc2019} (\emph{Cardiac Acquisitions for
+Multi-structure Ultrasound Segmentation}) provides 2D apical-2-chamber and
+apical-4-chamber acquisitions from 500 patients, each annotated by an
+expert echocardiographer at end-diastole and end-systole with four
+classes (background, LV-endo, LV-epi, LA). The official split assigns
+$400$ patients to training, $50$ to validation, and $50$ to test, with
+test annotations held out by the challenge organisers. Image quality is
+graded into \emph{Good}, \emph{Medium}, and \emph{Poor} categories by
+the same experts.
+
+The original CAMUS paper reported nnU-Net achieving
+HD $\approx 4.3$~mm on LV-endo and $\sim$$9\%$ EF MAE.
+Subsequent work \citep{painchaud2022, smistad2021}
+has reported incremental improvements using deeper architectures, custom
+losses, and view-aware training. Several papers have additionally
+explored sequence-aware models on CAMUS half-cycle annotations
+\citep{painchaud2022}, but these are out of scope for the present
+benchmark.
+
+EchoNet-Dynamic \citep{ouyang2020} provides a complementary large-scale
+video dataset for EF regression; we focus on CAMUS as the standard
+benchmark for \emph{segmentation-derived} EF, but our findings about
+architectural trade-offs are likely to transfer.
+
+\subsection{What is missing}
+\label{sec:related-gap}
+
+A small number of recent works compare a handful of architectures on
+CAMUS in their experimental sections, but none provide:
+\begin{itemize}[leftmargin=*,nosep]
+\item A unified training protocol across CNN, hybrid, and Transformer
+      paradigms (papers typically inherit each architecture's own
+      published hyperparameters, confounding architecture with
+      protocol).
+\item Per-class HD95 in millimetres with per-sample NIfTI spacing
+      (most papers report Dice only, or use pixel-space HD95).
+\item ED- versus ES-stratified reporting (essential for biplane
+      Simpson's EF analysis).
+\item Robustness analysis by CAMUS image-quality grade.
+\item Pairwise Wilcoxon significance with Bonferroni correction and a
+      critical-difference diagram.
+\item Released model checkpoints and per-patient predictions for
+      independent reanalysis.
+\end{itemize}
+This paper aims to fill each of these gaps.

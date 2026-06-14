@@ -1,0 +1,208 @@
+\begin{thebibliography}{24}
+\expandafter\ifx\csname natexlab\endcsname\relax\def\natexlab#1{#1}\fi
+\providecommand{\url}[1]{\texttt{#1}}
+\providecommand{\href}[2]{#2}
+\providecommand{\path}[1]{#1}
+\providecommand{\DOIprefix}{doi:}
+\providecommand{\ArXivprefix}{arXiv:}
+\providecommand{\URLprefix}{URL: }
+\providecommand{\Pubmedprefix}{pmid:}
+\providecommand{\doi}[1]{\href{http://dx.doi.org/#1}{\path{#1}}}
+\providecommand{\Pubmed}[1]{\href{pmid:#1}{\path{#1}}}
+\providecommand{\bibinfo}[2]{#2}
+\ifx\xfnm\relax \def\xfnm[#1]{\unskip,\space#1}\fi
+%Type = Article
+\bibitem[{Bao et~al.(2023)Bao, Dong, Piao and Wei}]{baochen2023swinmae}
+\bibinfo{author}{Bao, H.}, \bibinfo{author}{Dong, L.}, \bibinfo{author}{Piao,
+  S.}, \bibinfo{author}{Wei, F.}, \bibinfo{year}{2023}.
+\newblock \bibinfo{title}{{SwinMAE}: Self-supervised pretraining for vision
+  transformers via masked image modelling}.
+\newblock \bibinfo{journal}{arXiv preprint} .
+%Type = Article
+\bibitem[{Bland and Altman(1986)}]{bland1986}
+\bibinfo{author}{Bland, J.M.}, \bibinfo{author}{Altman, D.G.},
+  \bibinfo{year}{1986}.
+\newblock \bibinfo{title}{Statistical methods for assessing agreement between
+  two methods of clinical measurement}.
+\newblock \bibinfo{journal}{The Lancet} \bibinfo{volume}{327},
+  \bibinfo{pages}{307--310}.
+%Type = Inproceedings
+\bibitem[{Cao et~al.(2022)Cao, Wang, Chen, Jiang et~al.}]{cao2022}
+\bibinfo{author}{Cao, H.}, \bibinfo{author}{Wang, Y.}, \bibinfo{author}{Chen,
+  J.}, \bibinfo{author}{Jiang, D.}, et~al., \bibinfo{year}{2022}.
+\newblock \bibinfo{title}{{Swin-Unet}: {U}net-like pure transformer for medical
+  image segmentation}, in: \bibinfo{booktitle}{ECCV Workshops}.
+%Type = Article
+\bibitem[{Chen et~al.(2021)Chen, Lu, Yu et~al.}]{chen2021transunet}
+\bibinfo{author}{Chen, J.}, \bibinfo{author}{Lu, Y.}, \bibinfo{author}{Yu, Q.},
+  et~al., \bibinfo{year}{2021}.
+\newblock \bibinfo{title}{{TransUNet}: Transformers make strong encoders for
+  medical image segmentation}.
+\newblock \bibinfo{journal}{arXiv preprint arXiv:2102.04306} .
+%Type = Inproceedings
+\bibitem[{Chen et~al.(2018)Chen, Zhu, Papandreou, Schroff and
+  Adam}]{chen2018encoder}
+\bibinfo{author}{Chen, L.C.}, \bibinfo{author}{Zhu, Y.},
+  \bibinfo{author}{Papandreou, G.}, \bibinfo{author}{Schroff, F.},
+  \bibinfo{author}{Adam, H.}, \bibinfo{year}{2018}.
+\newblock \bibinfo{title}{Encoder-decoder with atrous separable convolution for
+  semantic image segmentation}, in: \bibinfo{booktitle}{ECCV}, pp.
+  \bibinfo{pages}{801--818}.
+%Type = Article
+\bibitem[{Dem{\v{s}}ar(2006)}]{demsar2006}
+\bibinfo{author}{Dem{\v{s}}ar, J.}, \bibinfo{year}{2006}.
+\newblock \bibinfo{title}{Statistical comparisons of classifiers over multiple
+  data sets}.
+\newblock \bibinfo{journal}{Journal of Machine Learning Research}
+  \bibinfo{volume}{7}, \bibinfo{pages}{1--30}.
+%Type = Inproceedings
+\bibitem[{Dosovitskiy et~al.(2021)Dosovitskiy, Beyer, Kolesnikov
+  et~al.}]{dosovitskiy2021}
+\bibinfo{author}{Dosovitskiy, A.}, \bibinfo{author}{Beyer, L.},
+  \bibinfo{author}{Kolesnikov, A.}, et~al., \bibinfo{year}{2021}.
+\newblock \bibinfo{title}{An image is worth 16x16 words: Transformers for image
+  recognition at scale}, in: \bibinfo{booktitle}{ICLR}.
+%Type = Inproceedings
+\bibitem[{He et~al.(2016)He, Zhang, Ren and Sun}]{he2016}
+\bibinfo{author}{He, K.}, \bibinfo{author}{Zhang, X.}, \bibinfo{author}{Ren,
+  S.}, \bibinfo{author}{Sun, J.}, \bibinfo{year}{2016}.
+\newblock \bibinfo{title}{Deep residual learning for image recognition}, in:
+  \bibinfo{booktitle}{CVPR}, pp. \bibinfo{pages}{770--778}.
+%Type = Inproceedings
+\bibitem[{Hu et~al.(2018)Hu, Shen and Sun}]{hu2018}
+\bibinfo{author}{Hu, J.}, \bibinfo{author}{Shen, L.}, \bibinfo{author}{Sun,
+  G.}, \bibinfo{year}{2018}.
+\newblock \bibinfo{title}{Squeeze-and-excitation networks}, in:
+  \bibinfo{booktitle}{CVPR}, pp. \bibinfo{pages}{7132--7141}.
+%Type = Inproceedings
+\bibitem[{Huang et~al.(2017)Huang, Liu, van~der Maaten and
+  Weinberger}]{huang2017}
+\bibinfo{author}{Huang, G.}, \bibinfo{author}{Liu, Z.},
+  \bibinfo{author}{van~der Maaten, L.}, \bibinfo{author}{Weinberger, K.Q.},
+  \bibinfo{year}{2017}.
+\newblock \bibinfo{title}{Densely connected convolutional networks}, in:
+  \bibinfo{booktitle}{CVPR}, pp. \bibinfo{pages}{4700--4708}.
+%Type = Article
+\bibitem[{Isensee et~al.(2021)Isensee, Jaeger, Kohl, Petersen and
+  Maier-Hein}]{isensee2021}
+\bibinfo{author}{Isensee, F.}, \bibinfo{author}{Jaeger, P.F.},
+  \bibinfo{author}{Kohl, S.A.A.}, \bibinfo{author}{Petersen, J.},
+  \bibinfo{author}{Maier-Hein, K.H.}, \bibinfo{year}{2021}.
+\newblock \bibinfo{title}{{nnU-Net}: a self-configuring method for deep
+  learning-based biomedical image segmentation}.
+\newblock \bibinfo{journal}{Nature Methods} \bibinfo{volume}{18},
+  \bibinfo{pages}{203--211}.
+\newblock \DOIprefix\doi{10.1038/s41592-020-01008-z}.
+%Type = Inproceedings
+\bibitem[{Kervadec et~al.(2019)Kervadec, Bouchtiba, Desrosiers, Granger, Dolz
+  and Ben~Ayed}]{kervadec2019}
+\bibinfo{author}{Kervadec, H.}, \bibinfo{author}{Bouchtiba, J.},
+  \bibinfo{author}{Desrosiers, C.}, \bibinfo{author}{Granger, {\'E}.},
+  \bibinfo{author}{Dolz, J.}, \bibinfo{author}{Ben~Ayed, I.},
+  \bibinfo{year}{2019}.
+\newblock \bibinfo{title}{Boundary loss for highly unbalanced segmentation},
+  in: \bibinfo{booktitle}{MIDL}.
+%Type = Article
+\bibitem[{Kolesnikov et~al.(2020)Kolesnikov, Beyer, Zhai
+  et~al.}]{kolesnikov2020}
+\bibinfo{author}{Kolesnikov, A.}, \bibinfo{author}{Beyer, L.},
+  \bibinfo{author}{Zhai, X.}, et~al., \bibinfo{year}{2020}.
+\newblock \bibinfo{title}{Big transfer ({BiT}): General visual representation
+  learning}.
+\newblock \bibinfo{journal}{ECCV} .
+%Type = Article
+\bibitem[{Lang et~al.(2015)Lang, Badano, Mor-Avi et~al.}]{lang2015}
+\bibinfo{author}{Lang, R.M.}, \bibinfo{author}{Badano, L.P.},
+  \bibinfo{author}{Mor-Avi, V.}, et~al., \bibinfo{year}{2015}.
+\newblock \bibinfo{title}{Recommendations for cardiac chamber quantification by
+  echocardiography in adults}.
+\newblock \bibinfo{journal}{Journal of the American Society of
+  Echocardiography} \bibinfo{volume}{28}, \bibinfo{pages}{1--39}.
+\newblock \DOIprefix\doi{10.1016/j.echo.2014.10.003}.
+%Type = Article
+\bibitem[{Leclerc et~al.(2019)Leclerc, Smistad, Pedrosa, {\O}stvik,
+  Cervenansky, Espinosa, Espeland, Berg, Jodoin, Grenier, Lartizien, D'hooge,
+  Lovstakken and Bernard}]{leclerc2019}
+\bibinfo{author}{Leclerc, S.}, \bibinfo{author}{Smistad, E.},
+  \bibinfo{author}{Pedrosa, J.}, \bibinfo{author}{{\O}stvik, A.},
+  \bibinfo{author}{Cervenansky, F.}, \bibinfo{author}{Espinosa, F.},
+  \bibinfo{author}{Espeland, T.}, \bibinfo{author}{Berg, E.A.R.},
+  \bibinfo{author}{Jodoin, P.M.}, \bibinfo{author}{Grenier, T.},
+  \bibinfo{author}{Lartizien, C.}, \bibinfo{author}{D'hooge, J.},
+  \bibinfo{author}{Lovstakken, L.}, \bibinfo{author}{Bernard, O.},
+  \bibinfo{year}{2019}.
+\newblock \bibinfo{title}{Deep learning for segmentation using an open
+  large-scale dataset in {2D} echocardiography}.
+\newblock \bibinfo{journal}{IEEE Transactions on Medical Imaging}
+  \bibinfo{volume}{38}, \bibinfo{pages}{2198--2210}.
+\newblock \DOIprefix\doi{10.1109/TMI.2019.2900516}.
+%Type = Inproceedings
+\bibitem[{Lin et~al.(2017)Lin, Doll{\'a}r, Girshick, He, Hariharan and
+  Belongie}]{lin2017}
+\bibinfo{author}{Lin, T.Y.}, \bibinfo{author}{Doll{\'a}r, P.},
+  \bibinfo{author}{Girshick, R.}, \bibinfo{author}{He, K.},
+  \bibinfo{author}{Hariharan, B.}, \bibinfo{author}{Belongie, S.},
+  \bibinfo{year}{2017}.
+\newblock \bibinfo{title}{Feature pyramid networks for object detection}, in:
+  \bibinfo{booktitle}{CVPR}, pp. \bibinfo{pages}{2117--2125}.
+%Type = Inproceedings
+\bibitem[{Liu et~al.(2022)Liu, Hu, Lin et~al.}]{liu2022swinv2}
+\bibinfo{author}{Liu, Z.}, \bibinfo{author}{Hu, H.}, \bibinfo{author}{Lin, Y.},
+  et~al., \bibinfo{year}{2022}.
+\newblock \bibinfo{title}{{Swin Transformer V2}: Scaling up capacity and
+  resolution}, in: \bibinfo{booktitle}{CVPR}.
+%Type = Inproceedings
+\bibitem[{Liu et~al.(2021)Liu, Lin, Cao et~al.}]{liu2021swin}
+\bibinfo{author}{Liu, Z.}, \bibinfo{author}{Lin, Y.}, \bibinfo{author}{Cao,
+  Y.}, et~al., \bibinfo{year}{2021}.
+\newblock \bibinfo{title}{{Swin Transformer}: Hierarchical vision transformer
+  using shifted windows}, in: \bibinfo{booktitle}{ICCV}.
+%Type = Inproceedings
+\bibitem[{Milletari et~al.(2016)Milletari, Navab and Ahmadi}]{milletari2016}
+\bibinfo{author}{Milletari, F.}, \bibinfo{author}{Navab, N.},
+  \bibinfo{author}{Ahmadi, S.A.}, \bibinfo{year}{2016}.
+\newblock \bibinfo{title}{{V-Net}: Fully convolutional neural networks for
+  volumetric medical image segmentation}, in: \bibinfo{booktitle}{3DV}.
+%Type = Inproceedings
+\bibitem[{Oktay et~al.(2018)Oktay, Schlemper, Folgoc et~al.}]{oktay2018}
+\bibinfo{author}{Oktay, O.}, \bibinfo{author}{Schlemper, J.},
+  \bibinfo{author}{Folgoc, L.L.}, et~al., \bibinfo{year}{2018}.
+\newblock \bibinfo{title}{Attention {U-Net}: Learning where to look for the
+  pancreas}, in: \bibinfo{booktitle}{MIDL}.
+%Type = Article
+\bibitem[{Ouyang et~al.(2020)Ouyang, He, Ghorbani et~al.}]{ouyang2020}
+\bibinfo{author}{Ouyang, D.}, \bibinfo{author}{He, B.},
+  \bibinfo{author}{Ghorbani, A.}, et~al., \bibinfo{year}{2020}.
+\newblock \bibinfo{title}{Video-based {AI} for beat-to-beat assessment of
+  cardiac function}.
+\newblock \bibinfo{journal}{Nature} \bibinfo{volume}{580},
+  \bibinfo{pages}{252--256}.
+\newblock \DOIprefix\doi{10.1038/s41586-020-2145-8}.
+%Type = Article
+\bibitem[{Painchaud et~al.(2022)Painchaud, Skandarani, Judge
+  et~al.}]{painchaud2022}
+\bibinfo{author}{Painchaud, N.}, \bibinfo{author}{Skandarani, Y.},
+  \bibinfo{author}{Judge, T.}, et~al., \bibinfo{year}{2022}.
+\newblock \bibinfo{title}{Echocardiography segmentation with enforced temporal
+  consistency}.
+\newblock \bibinfo{journal}{IEEE Transactions on Medical Imaging} .
+%Type = Inproceedings
+\bibitem[{Ronneberger et~al.(2015)Ronneberger, Fischer and
+  Brox}]{ronneberger2015}
+\bibinfo{author}{Ronneberger, O.}, \bibinfo{author}{Fischer, P.},
+  \bibinfo{author}{Brox, T.}, \bibinfo{year}{2015}.
+\newblock \bibinfo{title}{{U-Net}: Convolutional networks for biomedical image
+  segmentation}, in: \bibinfo{booktitle}{MICCAI}, pp.
+  \bibinfo{pages}{234--241}.
+\newblock \DOIprefix\doi{10.1007/978-3-319-24574-4_28}.
+%Type = Article
+\bibitem[{Smistad et~al.(2021)Smistad, {\O}stvik, Haugen and
+  Lovstakken}]{smistad2021}
+\bibinfo{author}{Smistad, E.}, \bibinfo{author}{{\O}stvik, A.},
+  \bibinfo{author}{Haugen, B.}, \bibinfo{author}{Lovstakken, L.},
+  \bibinfo{year}{2021}.
+\newblock \bibinfo{title}{2d left ventricle segmentation using deep learning}.
+\newblock \bibinfo{journal}{IEEE Transactions on Ultrasonics, Ferroelectrics,
+  and Frequency Control} .
+
+\end{thebibliography}

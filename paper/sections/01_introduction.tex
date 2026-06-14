@@ -1,0 +1,103 @@
+%==============================================================================
+\section{Introduction}
+\label{sec:introduction}
+
+Two-dimensional echocardiography is the most widely used cardiac imaging
+modality worldwide: it is portable, inexpensive, non-ionising, and provides
+real-time visualisation of cardiac structure and function. Its core
+quantitative output --- left ventricular ejection fraction (LVEF), computed
+from end-diastolic and end-systolic volumes via the biplane Simpson's method
+\citep{lang2015} --- drives a large fraction of clinical cardiac decisions,
+from diagnosis of heart failure to monitoring of cardiotoxic chemotherapy.
+The clinical importance of LVEF is matched by the operator-dependent
+nature of its measurement: published inter-observer LVEF variability is
+approximately $7$--$10\%$ \citep{leclerc2019}, which directly limits the
+sensitivity of LVEF as a clinical decision boundary.
+
+Automated segmentation of the left ventricular endocardium (LV-endo),
+epicardium (LV-epi), and left atrium (LA) from two-dimensional apical
+2-chamber (2CH) and 4-chamber (4CH) views would, in principle, eliminate
+this operator-dependent variability and provide reproducible volumetric
+measurements. The technical challenge is substantial: ultrasound suffers
+from low signal-to-noise ratio, speckle noise, low boundary contrast,
+acoustic shadowing, and view-dependent geometric foreshortening.
+
+\paragraph{Architectural pluralism.}
+Three paradigms have emerged as competitive solutions in this space:
+\begin{itemize}[leftmargin=*,nosep]
+\item \textbf{Pure convolutional networks.} U-Net
+      \citep{ronneberger2015} and its descendants (residual encoders, SE
+      blocks, attention gates, deep supervision)
+      \citep{milletari2016,oktay2018} remain the dominant architectural
+      family, with nnU-Net \citep{isensee2021} serving as a strong
+      auto-configured baseline.
+\item \textbf{Hybrid CNN--Transformer networks.} TransUNet
+      \citep{chen2021transunet} and similar hybrids combine a
+      convolutional encoder with a Vision Transformer bottleneck,
+      explicitly trading off local detail (CNN) against global context
+      (self-attention).
+\item \textbf{Pure Transformer networks.} Swin-UNet \citep{cao2022}
+      replaces the convolutional backbone entirely with windowed
+      self-attention, demonstrating that pure attention can match or
+      exceed CNN performance on a range of medical tasks.
+\end{itemize}
+
+\paragraph{The benchmarking gap.}
+Despite this architectural pluralism, the literature offers no
+systematic, like-for-like comparison of these three paradigms on a single
+shared evaluation pipeline. Each paper introducing a new architecture
+typically compares against a small number of baselines under different
+training protocols, augmentations, learning-rate schedules, and
+evaluation metrics. As a result it is difficult for clinicians or
+practitioners to answer a basic question: \emph{which architectural
+family should I use for echocardiographic segmentation, and what are
+the trade-offs?}
+
+This paper provides that comparison on the CAMUS dataset
+\citep{leclerc2019}, the standard public 2D echocardiographic
+segmentation benchmark, with 500 patients across two views and two
+cardiac phases. We train nine representative architectures spanning the
+three paradigms above using one identical protocol --- same optimiser,
+loss, schedule, augmentation, mixed-precision settings, and early-stopping
+criterion --- and evaluate them on a single shared pipeline reporting
+geometric, boundary, clinical, and efficiency metrics simultaneously.
+
+\paragraph{Contributions.}
+\begin{itemize}[leftmargin=*,nosep]
+\item We present the largest unified benchmark of deep segmentation
+      architectures on CAMUS to date: nine architectures across three
+      paradigms, trained and evaluated under a single shared protocol.
+
+\item We report \emph{multi-dimensional} evaluation, going beyond Dice
+      to include HD95 in millimetres (with per-sample NIfTI pixel
+      spacing), ASSD, biplane Simpson's EF MAE and Pearson $r$, ED/ES
+      stratified metrics, robustness across CAMUS image-quality grades,
+      and efficiency benchmarks (parameters, FLOPs, latency, peak
+      memory). The full results matrix and per-patient outputs are
+      released.
+
+\item We apply pairwise Wilcoxon signed-rank tests with Bonferroni
+      correction to identify which architectural differences are
+      statistically significant, and produce a critical-difference
+      diagram showing the top-tier band of equivalent models.
+
+\item Our best architecture, TransUNet, reaches Dice $= 0.9122$,
+      HD95 $= 1.82$~mm; nnU-Net reaches Dice $= 0.9099$, HD95 $= 1.93$~mm
+      with $6\times$ fewer parameters and \PLACE{$\sim 5\times$} faster
+      inference. The HD95 of approximately $1.9$~mm represents a
+      substantial improvement over the originally published nnU-Net
+      baseline ($\approx 4.3$~mm) \citep{leclerc2019} and demonstrates
+      the importance of training-protocol modernisation for fair
+      cross-architecture comparison.
+
+\item We release a fully reproducible benchmark framework: training,
+      evaluation, statistical analysis, and figure generation code.
+\end{itemize}
+
+\paragraph{Outline.}
+Section~\ref{sec:related} reviews segmentation architectures and the
+CAMUS benchmark. Section~\ref{sec:methods} describes the nine
+architectures, the unified training protocol, and the evaluation
+pipeline. Section~\ref{sec:results} reports the experimental results.
+Section~\ref{sec:discussion} discusses architectural design choices,
+trade-offs, and limitations. Section~\ref{sec:conclusion} concludes.

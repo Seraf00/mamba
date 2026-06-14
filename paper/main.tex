@@ -1,0 +1,149 @@
+%==============================================================================
+% Paper 1 — Medical Image Analysis (Elsevier)
+%
+% Target: Medical Image Analysis, single-column, ~10–15 pages, Harvard
+%         author-year citations.
+% Status: draft — sections with [TODO/PLACEHOLDER] markers are awaiting
+%         data from the current Colab pipeline.
+%==============================================================================
+
+\documentclass[review,1p,times]{elsarticle}
+
+% ---------- Packages ----------------------------------------------------------
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{makecell}
+\usepackage{array}
+% siunitx removed -- tables now use plain c columns
+\usepackage{xcolor}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue}
+\usepackage{enumitem}
+\usepackage{subcaption}
+% Note: elsarticle already loads natbib; do not load it again.
+
+% TODO markers
+\newcommand{\TODO}[1]{\textcolor{red}{\textbf{[TODO: #1]}}}
+\newcommand{\PLACE}[1]{\textcolor{orange}{\textbf{[PLACEHOLDER: #1]}}}
+\newcommand{\REVIEW}[1]{\textcolor{blue}{\textbf{[REVIEW: #1]}}}
+
+% Math operators
+\DeclareMathOperator{\Dice}{Dice}
+\DeclareMathOperator{\HD}{HD}
+\DeclareMathOperator{\ASSD}{ASSD}
+
+% Bibliography style: MedIA uses Harvard (author-year)
+\bibliographystyle{elsarticle-harv}
+
+\journal{Medical Image Analysis}
+
+%==============================================================================
+\begin{document}
+
+\begin{frontmatter}
+
+\title{A Comprehensive Benchmark of Deep Learning Architectures for
+       2D Echocardiographic Segmentation:\\
+       From CNNs to Transformers}
+
+% ---------- Authors -----------------------------------------------------------
+% TODO: replace First/Second/Corresponding Author and addresses before submission.
+\author[a]{First Author}
+\ead{first.author@institution.TODO}
+
+\author[a]{Second Author}
+
+\author[a,b]{Corresponding Author\corref{cor1}}
+\ead{corresponding@institution.TODO}
+
+\cortext[cor1]{Corresponding author.}
+
+\address[a]{Department / Institution / Address (TODO)}
+\address[b]{Secondary affiliation if any (TODO)}
+
+% ---------- Abstract ----------------------------------------------------------
+\begin{abstract}
+%
+Two-dimensional echocardiography is the most widely used cardiac imaging
+modality, but quantitative analysis is hampered by speckle noise, low
+boundary contrast, and inter-observer variability. Deep learning has
+matured into a competitive solution for this problem, with U-Net
+descendants, attention-augmented CNNs, hybrid CNN--Transformer designs,
+and pure Transformer networks all reporting strong results. Direct
+comparison across these paradigms, however, has been hampered by
+inconsistent training protocols, evaluation pipelines, and reporting
+conventions in the published literature.
+%
+We provide a unified benchmark of nine representative segmentation
+architectures spanning three paradigms --- pure CNN, hybrid CNN--Transformer,
+and pure Transformer --- on the CAMUS 2D echocardiographic
+segmentation dataset \citep{leclerc2019}. All models share an identical
+training protocol, data split, and evaluation pipeline, and are reported
+on a multi-dimensional set of metrics: per-class Dice and IoU,
+Hausdorff distance at 95\% (HD95) in millimetres with per-sample pixel
+spacing, biplane Simpson's ejection fraction (EF) error, end-diastolic
+and end-systolic stratified metrics, robustness across image-quality
+grades, efficiency (parameters, FLOPs, latency, memory), and
+Bonferroni-corrected Wilcoxon significance tests.
+%
+The best base architecture, TransUNet, reaches Dice $= 0.9122$,
+HD95 $= 1.82$~mm, and EF MAE $= 7.52\%$ on the official CAMUS test set.
+nnU-Net follows at Dice $= 0.9099$, HD95 $= 1.93$~mm, EF MAE $= 5.72\%$
+($r = 0.82$). The full-network HD95 of approximately $1.9$~mm represents
+a substantial improvement over the published nnU-Net baseline of
+$4.3$~mm \citep{leclerc2019}, attributable to training-protocol
+modernisation (cosine annealing, mixed precision, boundary loss) rather
+than to architectural changes.
+%
+The benchmark also yields findings that single-architecture papers do not
+report: \PLACE{the largest accuracy gap is on the LV-epicardial class
+across all paradigms ($\Delta\text{Dice} \approx \TODO{N}$ from the
+LV-endo class), the ranking is sensitive to image quality
+(\TODO{quantify the Good $\to$ Poor degradation by paradigm)},
+and the parameter-vs-accuracy Pareto frontier is dominated by
+nnU-Net at the small-model end and TransUNet at the high-accuracy end.}
+%
+All training, evaluation, and analysis code, as well as model
+checkpoints, are publicly released.
+%
+\end{abstract}
+
+\begin{keyword}
+medical image segmentation \sep echocardiography \sep CAMUS \sep
+deep learning benchmark \sep U-Net \sep Swin Transformer \sep TransUNet
+\end{keyword}
+
+\end{frontmatter}
+
+%==============================================================================
+% Body
+%==============================================================================
+
+\input{sections/01_introduction}
+\input{sections/02_related_work}
+\input{sections/03_methods}
+\input{sections/04_results}
+\input{sections/05_discussion}
+\input{sections/06_conclusion}
+
+%==============================================================================
+% Acknowledgements / data availability
+%==============================================================================
+\section*{Data and code availability}
+The CAMUS dataset is publicly available from
+\url{https://www.creatis.insa-lyon.fr/Challenge/camus/}. Training,
+evaluation, and analysis code; trained model checkpoints; and all
+intermediate JSON / CSV outputs supporting this paper are released at
+\url{https://github.com/TODO/repo}. % TODO: replace with real repo URL
+
+\section*{Acknowledgements}
+\TODO{Funding sources, compute, clinical reviewers, dataset providers.}
+
+%==============================================================================
+% Bibliography
+%==============================================================================
+\bibliography{references}
+
+\end{document}

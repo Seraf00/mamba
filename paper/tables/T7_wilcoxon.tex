@@ -1,0 +1,27 @@
+%==============================================================================
+% Paper 1 / T7 — Wilcoxon (auto-generated)
+%==============================================================================
+\begin{table*}[t]
+\centering
+\caption{Pairwise Wilcoxon signed-rank test on per-sample mean Dice,
+Bonferroni-corrected over $\binom{9}{2} = 36$ pairs. ``NS'' marks
+pairs not significantly different at $p < 0.05$ after correction.}
+\label{tab:wilcoxon}
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{l c c c c c c c c c }
+\toprule
+ & UNet-V1 & UNet-V2 & UNet-ResNet & DeepLabV3+ & nnU-Net & DenseContextU-Net & FPN-UNet & Swin-UNet & TransUNet \\
+\midrule
+UNet-V1 & --- & 3e-13 & NS & 4e-28 & NS & 4e-31 & 7e-30 & 5e-20 & NS \\
+UNet-V2 &  & --- & 2e-09 & 6e-17 & 2e-13 & 3e-26 & 2e-19 & 3e-03 & 1e-12 \\
+UNet-ResNet &  &  & --- & 1e-26 & NS & 3e-29 & 9e-30 & 8e-17 & NS \\
+DeepLabV3+ &  &  &  & --- & 1e-28 & NS & NS & 1e-11 & 1e-28 \\
+nnU-Net &  &  &  &  & --- & 6e-32 & 2e-30 & 1e-21 & NS \\
+DenseContextU-Net &  &  &  &  &  & --- & NS & 4e-22 & 6e-30 \\
+FPN-UNet &  &  &  &  &  &  & --- & 2e-15 & 1e-29 \\
+Swin-UNet &  &  &  &  &  &  &  & --- & 3e-21 \\
+TransUNet &  &  &  &  &  &  &  &  & --- \\
+\bottomrule
+\end{tabular}
+\end{table*}

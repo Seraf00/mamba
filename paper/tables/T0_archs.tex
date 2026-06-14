@@ -1,0 +1,27 @@
+%==============================================================================
+% Paper 1 / T0 — Architecture summary
+%==============================================================================
+\begin{table*}[t]
+\centering
+\caption{The nine architectures benchmarked in this paper.
+``Pretrained'' indicates whether the encoder is initialised from
+ImageNet/BiT pretrained weights or trained from scratch.}
+\label{tab:archs}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{llllll}
+\toprule
+Paradigm           & Architecture       & Encoder              & Decoder           & Pretrained & Params (M) \\
+\midrule
+Pure CNN           & UNet-V1            & scratch / conv       & transposed conv   & ---        &  31.04 \\
+Pure CNN           & UNet-V2            & scratch / conv + SE  & attn-gated skips  & ---        &  33.00 \\
+Pure CNN           & UNet-ResNet        & ResNet-34            & U-Net decoder     & ImageNet-1k&  29.07 \\
+Pure CNN           & DeepLabV3+         & ResNet-50            & ASPP + light dec. & ImageNet-1k&  40.34 \\
+Pure CNN           & nnU-Net            & auto-configured      & deep-supervision  & ---        &  15.62 \\
+Pure CNN           & DenseContextU-Net  & dense + context      & dense decoder     & ---        &   2.18 \\
+Pure CNN           & FPN-UNet           & ResNet-50            & FPN + U-Net dec.  & ImageNet-1k&  32.16 \\
+Hybrid             & TransUNet          & ResNetV2 + ViT-B/16  & cascaded upsmpler & BiT + IN-21k& 102.09 \\
+Pure Transformer   & Swin-UNet          & Swin-Tiny            & Swin decoder      & IN-1k      &  41.84 \\
+\bottomrule
+\end{tabular}
+\end{table*}

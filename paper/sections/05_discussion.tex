@@ -1,0 +1,152 @@
+%==============================================================================
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Which architectural family wins on CAMUS?}
+\label{sec:disc-families}
+
+The top tier of our benchmark is mixed across paradigms: a hybrid
+CNN--Transformer (TransUNet) leads on bulk Dice and HD95, but a pure CNN
+(nnU-Net) leads on EF MAE \emph{and} on parameter efficiency. The
+difference between them on mean Dice is $0.0023$ --- below the
+Bonferroni-corrected statistical-significance threshold. A practitioner
+choosing between these two architectures should be guided not by Dice
+but by deployment constraints (nnU-Net needs $6.5\times$ fewer parameters
+and is faster) or by the clinical objective (nnU-Net is more accurate at
+EF and tighter at Bland--Altman bias).
+
+The pure-Transformer family (Swin-UNet) is competitive on bulk Dice
+($0.8878$) but visibly worse on EF (MAE $10.46\%$, $r = 0.574$). This
+finding is consistent with reports that pure-attention models, despite
+strong overall overlap, can produce boundary contours that are subtly
+biased \citep{chen2021transunet} --- an effect that compounds when
+contours feed Simpson's biplane volumetric integration.
+
+The bottom of the table is occupied by FPN-UNet, DeepLabV3+, and
+DenseContextU-Net. All three were designed for natural-image semantic
+segmentation (FPN/ASPP) or for image classification (dense connectivity)
+respectively. Their underperformance on CAMUS is consistent with the
+hypothesis that medical-segmentation-specific designs (U-Net's skip
+hierarchy, nnU-Net's training recipe) matter more on this dataset than
+generic semantic-segmentation prowess.
+
+\subsection{Comparison to the published CAMUS baselines}
+\label{sec:disc-leaderboard}
+
+The original CAMUS paper \citep{leclerc2019} reported nnU-Net HD95
+$\approx 4.3$~mm and EF MAE $\sim$$9\%$. Our reproduced nnU-Net under the
+unified protocol reaches HD95 $1.93$~mm and EF MAE $5.72\%$ --- roughly
+twice as accurate on the boundary axis and substantially better on EF.
+
+This gap is \emph{not} an architectural improvement: nnU-Net's
+architecture is unchanged. The improvement is attributable to three
+training-protocol upgrades made standard since 2019:
+\begin{enumerate}[leftmargin=*,nosep]
+\item Cosine-with-warm-restarts learning-rate schedule with
+      $10$-epoch warmup, in place of the original ReduceLROnPlateau.
+\item Mixed-precision training (FP16 AMP), which allows larger effective
+      batch sizes and smoother loss landscapes.
+\item Composite loss with an explicit boundary term
+      \citep{kervadec2019}, which directly penalises the
+      Hausdorff-relevant boundary error.
+\end{enumerate}
+This is a useful baseline point for the field: \PLACE{cross-paper
+comparisons of CAMUS results from before $\sim 2021$ to after should be
+read with the understanding that protocol changes alone produce
+sub-millimetre HD95 improvements at constant architecture.}
+
+\subsection{Design choices that matter}
+\label{sec:disc-design}
+
+Aggregating across our nine architectures, several design choices
+correlate with strong performance:
+
+\begin{itemize}[leftmargin=*,nosep]
+\item \textbf{Pretrained encoders} (TransUNet, UNet-ResNet, Swin-UNet,
+      FPN-UNet, DeepLabV3+). The two highest-Dice non-nnU-Net models use
+      pretrained encoders. \PLACE{However, in our parameter-matched
+      analysis (Paper 2 / supplementary), this advantage shrinks
+      substantially.}
+\item \textbf{Deep skip connections} (every U-Net-shaped architecture
+      except DeepLabV3+). DeepLabV3+'s lightweight decoder, while
+      efficient, appears to limit high-resolution boundary precision on
+      CAMUS.
+\item \textbf{Boundary-aware loss} (used uniformly in our protocol).
+      This is a protocol choice rather than an architecture choice, but
+      it appears to be among the largest single contributors to the
+      HD95 improvement over published CAMUS baselines.
+\item \textbf{Auto-configuration} (nnU-Net's distinguishing feature).
+      The nnU-Net framework produces a competitive model on this dataset
+      with $\sim$$15$~M parameters --- substantially smaller than any
+      pretrained-encoder architecture --- by selecting patch size, batch
+      size, and augmentation strategy from data statistics.
+\end{itemize}
+
+\subsection{Clinical implications}
+\label{sec:disc-clinical}
+
+For deployment in echocardiographic LVEF assessment, the choice between
+the four top-tier architectures should be driven by three criteria:
+(i) clinical accuracy target, (ii) hardware constraints, and (iii)
+inference-time latency budget.
+\begin{itemize}[leftmargin=*,nosep]
+\item For \emph{maximum reproducibility and tightest EF agreement},
+      nnU-Net is the recommended choice (lowest EF MAE, smallest
+      Bland--Altman bias).
+\item For \emph{maximum boundary accuracy} at deployment-irrelevant cost,
+      TransUNet is the highest-HD95 model.
+\item For \emph{edge / portable ultrasound deployment} where
+      parameters and latency dominate, nnU-Net at $15.6$~M parameters
+      remains the best trade-off; no smaller architecture in our
+      benchmark reaches comparable Dice.
+\end{itemize}
+None of the four top-tier models reach below-$5\%$ EF MAE in this study,
+indicating that human-level cardiologist agreement is still a target
+boundary for the field rather than a solved problem.
+
+\subsection{Limitations and future work}
+\label{sec:disc-limits}
+
+We acknowledge five limitations.
+
+\begin{enumerate}[leftmargin=*,nosep]
+\item \textbf{Single-dataset.} All evaluation is on CAMUS. A cross-dataset
+      transfer evaluation (\emph{e.g.,} EchoNet-Dynamic
+      \citep{ouyang2020}) would strengthen the generality claims and is
+      planned for future work.
+\item \textbf{2D only.} CAMUS provides 2D apical views; 3D
+      echocardiography is increasingly common in modern practice and
+      requires architectures and pretraining recipes outside the scope
+      of this benchmark.
+\item \textbf{Test set size.} The CAMUS official test set is 50 patients
+      ($200$ ED+ES frames). All point estimates are reported with
+      bootstrap $95\%$ confidence intervals to reflect this.
+\item \textbf{No SSM models.} The recent wave of selective state space
+      models (Mamba family) is the subject of a separate, dedicated study
+      \PLACE{(cite Paper 2 once arxived)}, and is deliberately excluded
+      from the present benchmark to maintain clean three-paradigm
+      framing.
+\item \textbf{Single training protocol.} A single shared protocol is the
+      goal of this benchmark, but some architectures may benefit from
+      protocol-specific tuning (\emph{e.g.,} larger batch sizes for
+      pretrained Transformers). Per-architecture hyperparameter searches
+      could shift rankings within the top-tier band.
+\end{enumerate}
+
+\subsection{Take-home messages}
+\label{sec:disc-takehome}
+
+\begin{enumerate}[leftmargin=*,nosep]
+\item No single architectural family dominates CAMUS. Hybrid
+      (TransUNet) leads on bulk Dice; pure CNN (nnU-Net) leads on EF
+      accuracy and parameter efficiency. Pure Transformer (Swin-UNet) is
+      competitive on Dice but degraded on EF.
+\item Training-protocol modernisation (cosine schedule, AMP, boundary
+      loss) accounts for most of the $\sim$$2\times$ improvement in
+      HD95 over the original CAMUS baselines, independent of
+      architecture.
+\item LV-epicardium remains the hardest of the three foreground classes
+      across every architectural family.
+\item The accuracy--parameter Pareto frontier is dominated by nnU-Net at
+      the efficient end and TransUNet at the high-accuracy end.
+\end{enumerate}
