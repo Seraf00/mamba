@@ -33,8 +33,11 @@ Each ``evaluation_results.json`` looks like::
           "hd95_mean_es": 1.79,
           "dice_mean_ed": ...,
           "dice_mean_es": ...,
-          "ef_metrics": {"ef_mae": 7.52, "ef_correlation": 0.810,
-                         "bland_altman_bias": -3.52},
+          "ef_metrics": {"ef_mae": 7.30, "ef_correlation": 0.824,
+                         "bland_altman_bias": -3.52,
+                         "bland_altman_loa_lower": -17.4,
+                         "bland_altman_loa_upper": 16.8},
+          "dice_std": 0.07, "dice_ci_lower": 0.905, "dice_ci_upper": 0.914,
           "params_M": 102.1,
           "per_sample_dice": [...]
         },
@@ -248,8 +251,9 @@ def _get(r: Dict, *keys, default=None):
 # ---------------------------------------------------------------------------
 
 def gen_p1_t1_main_dice(results: Dict[str, Dict]) -> str:
-    """Mean and per-class Dice for the 9 base architectures."""
-    rows: List[Tuple[str, str, float, float, float, float, float]] = []
+    """Mean and per-class Dice for the 9 base architectures, with bootstrap
+    95% CIs on mean Dice (read from ``dice_ci_lower``/``dice_ci_upper``)."""
+    rows: List[Tuple] = []
     for key, disp in P1_BASE_DISPLAY.items():
         r = results.get(key)
         if not r:
@@ -257,6 +261,8 @@ def gen_p1_t1_main_dice(results: Dict[str, Dict]) -> str:
         rows.append((
             disp, P1_PARADIGM[key],
             float(_get(r, "dice_mean", default=0)),
+            _get(r, "dice_ci_lower"),
+            _get(r, "dice_ci_upper"),
             float(_get(r, "dice_lv_endocardium", default=0)),
             float(_get(r, "dice_lv_epicardium", default=0)),
             float(_get(r, "dice_left_atrium", default=0)),
@@ -266,17 +272,19 @@ def gen_p1_t1_main_dice(results: Dict[str, Dict]) -> str:
 
     # column-wise best
     dice_col = [r[2] for r in rows]
-    le_col   = [r[3] for r in rows]
-    lp_col   = [r[4] for r in rows]
-    la_col   = [r[5] for r in rows]
+    le_col   = [r[5] for r in rows]
+    lp_col   = [r[6] for r in rows]
+    la_col   = [r[7] for r in rows]
 
     body = []
-    for i, (disp, par, d, le, lp, la, p) in enumerate(rows):
+    for i, (disp, par, d, clo, chi, le, lp, la, p) in enumerate(rows):
         d_str  = _bold(f"{d:.4f}")  if _bold_max(dice_col, i) else (_ul(f"{d:.4f}") if i == 1 else f"{d:.4f}")
+        ci_str = (f"[{float(clo):.4f}, {float(chi):.4f}]"
+                  if clo is not None and chi is not None else "{---}")
         le_str = _bold(f"{le:.4f}") if _bold_max(le_col, i)   else f"{le:.4f}"
         lp_str = _bold(f"{lp:.4f}") if _bold_max(lp_col, i)   else f"{lp:.4f}"
         la_str = _bold(f"{la:.4f}") if _bold_max(la_col, i)   else f"{la:.4f}"
-        body.append(f"{disp:<18} & {par:<11} & {d_str} & {le_str} & {lp_str} & {la_str} & {p:>5.1f} \\\\")
+        body.append(f"{disp:<18} & {par:<11} & {d_str} & {ci_str} & {le_str} & {lp_str} & {la_str} & {p:>5.1f} \\\\")
 
     return _wrap_table_p1_t1("\n".join(body))
 
@@ -289,19 +297,21 @@ def _wrap_table_p1_t1(body: str) -> str:
         "\\begin{table*}[t]\n"
         "\\centering\n"
         "\\caption{Mean and per-class Dice on the CAMUS official test split for the\n"
-        "nine base architectures. Best per column in \\textbf{bold}, second-best\n"
-        "\\underline{underlined}. Per-class scores are LV-endocardium, LV-epicardium,\n"
-        "and left atrium.}\n"
+        "nine base architectures. The bracketed interval is the bootstrap 95\\%\n"
+        "confidence interval on mean Dice over the 50-patient test set. Best per\n"
+        "column in \\textbf{bold}, second-best \\underline{underlined}. Per-class\n"
+        "scores are LV-endocardium, LV-epicardium, and left atrium.}\n"
         "\\label{tab:main}\n"
         "\\small\n"
-        "\\setlength{\\tabcolsep}{5pt}\n"
-        "\\begin{tabular}{l c c c c c c}\n"
+        "\\setlength{\\tabcolsep}{4pt}\n"
+        "\\resizebox{\\textwidth}{!}{%\n"
+        "\\begin{tabular}{l c c c c c c c}\n"
         "\\toprule\n"
-        "Architecture       & Paradigm & {Mean Dice} & {LV-endo} & {LV-epi} & {LA} & {Params (M)} \\\\\n"
+        "Architecture       & Paradigm & {Mean Dice} & {95\\% CI} & {LV-endo} & {LV-epi} & {LA} & {Params (M)} \\\\\n"
         "\\midrule\n"
         f"{body}\n"
         "\\bottomrule\n"
-        "\\end{tabular}\n"
+        "\\end{tabular}}\n"
         "\\end{table*}\n"
     )
 
@@ -405,18 +415,22 @@ def gen_p1_t4_ef(results: Dict[str, Dict]) -> str:
         rows.append((disp,
                      ef.get("ef_mae"),
                      ef.get("ef_correlation"),
-                     ef.get("bland_altman_bias")))
+                     ef.get("bland_altman_bias"),
+                     ef.get("bland_altman_loa_lower"),
+                     ef.get("bland_altman_loa_upper")))
     rows = [r for r in rows if r[1] is not None]
     rows.sort(key=lambda x: x[1])
 
     mae_col = [r[1] for r in rows]
     r_col   = [r[2] for r in rows]
     body = []
-    for i, (disp, mae, rr, bias) in enumerate(rows):
+    for i, (disp, mae, rr, bias, lo, hi) in enumerate(rows):
         m_str = _bold(f"{mae:.2f}")  if _bold_min(mae_col, i) else f"{mae:.2f}"
         r_str = _bold(f"{rr:.3f}")   if _bold_max(r_col, i)   else f"{rr:.3f}"
         bias_str = f"{bias:+.2f}" if bias is not None else "{---}"
-        body.append(f"{disp:<18} & {m_str} & {r_str} & {bias_str} \\\\")
+        loa_str = (f"[{lo:+.1f}, {hi:+.1f}]"
+                   if lo is not None and hi is not None else "{---}")
+        body.append(f"{disp:<18} & {m_str} & {r_str} & {bias_str} & {loa_str} \\\\")
 
     return (
         "%==============================================================================\n"
@@ -425,13 +439,15 @@ def gen_p1_t4_ef(results: Dict[str, Dict]) -> str:
         "\\begin{table}[t]\n"
         "\\centering\n"
         "\\caption{Biplane Simpson's ejection fraction (EF) metrics on the CAMUS\n"
-        "test set. Best per column in \\textbf{bold}.}\n"
+        "test set. Bias and the 95\\% limits of agreement (LoA) are the\n"
+        "Bland--Altman statistics against reference EF over the 50 test patients.\n"
+        "Best per column in \\textbf{bold}.}\n"
         "\\label{tab:ef}\n"
         "\\small\n"
         "\\setlength{\\tabcolsep}{6pt}\n"
-        "\\begin{tabular}{l c c c}\n"
+        "\\begin{tabular}{l c c c c}\n"
         "\\toprule\n"
-        "Architecture       & {MAE (\\%)} & {$r$} & {Bias (\\%)} \\\\\n"
+        "Architecture       & {MAE (\\%)} & {$r$} & {Bias (\\%)} & {95\\% LoA (\\%)} \\\\\n"
         "\\midrule\n"
         f"{chr(10).join(body)}\n"
         "\\bottomrule\n"
@@ -543,11 +559,12 @@ def gen_p1_t7_wilcoxon(results: Dict[str, Dict],
         "\\label{tab:wilcoxon}\n"
         "\\small\n"
         "\\setlength{\\tabcolsep}{3pt}\n"
+        "\\resizebox{\\textwidth}{!}{%\n"
         f"\\begin{{tabular}}{{{cols}}}\n"
         "\\toprule\n"
         f"{body}\n"
         "\\bottomrule\n"
-        "\\end{tabular}\n"
+        "\\end{tabular}}\n"
         "\\end{table*}\n"
     )
 
@@ -986,6 +1003,88 @@ def gen_p2_t9_wilcoxon(results: Dict[str, Dict]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Prose consistency lint
+#
+# Reviewer #1's structural fix for the 2026 EF-number regression: every
+# headline number in the prose must be regenerable from the same JSON that
+# feeds the tables, and the specific stale values that caused the bug must
+# never reappear. Run with --check_prose (+ --strict to fail the build).
+# ---------------------------------------------------------------------------
+
+# Values that were wrong in the prose and must never come back:
+#   5.72  = nnU-Net esv_mean, mis-slotted as EF MAE in the abstract
+#   7.52  = the old fill_tables docstring placeholder for TransUNet EF MAE
+#   0.823 = a stale nnU-Net EF correlation (canonical is 0.787)
+PROSE_BLOCKLIST = ["5.72", "7.52", "0.823"]
+
+
+def gen_canonical_anchors(results: Dict[str, Dict]) -> List[Tuple[str, str]]:
+    """Return ``[(label, value_string)]`` that the prose MUST contain, derived
+    from the same JSON that feeds the tables. Keeps headline numbers in sync so
+    a prose/table disagreement is caught mechanically."""
+    anchors: List[Tuple[str, str]] = []
+
+    def add(key, field, fmt, label, sub=None):
+        r = results.get(key) or {}
+        v = (r.get(sub) or {}).get(field) if sub else r.get(field)
+        if v is not None:
+            anchors.append((label, format(float(v), fmt)))
+
+    add("nnunet", "ef_mae", ".2f", "nnU-Net EF MAE", sub="ef_metrics")
+    add("transunet", "ef_mae", ".2f", "TransUNet EF MAE", sub="ef_metrics")
+    add("nnunet", "ef_correlation", ".3f", "nnU-Net EF r", sub="ef_metrics")
+    add("transunet", "dice_mean", ".4f", "TransUNet Dice")
+    add("nnunet", "dice_mean", ".4f", "nnU-Net Dice")
+    return anchors
+
+
+def check_prose(anchors: List[Tuple[str, str]], blocklist: List[str],
+                prose_files: List[str]) -> List[str]:
+    """Return a list of violation strings (empty list == clean)."""
+    violations: List[str] = []
+    texts: Dict[str, str] = {}
+    for f in prose_files:
+        try:
+            texts[f] = Path(f).read_text(encoding="utf-8")
+        except OSError:
+            continue
+    joined = "\n".join(texts.values())
+    for bad in blocklist:
+        for f, t in texts.items():
+            for ln, line in enumerate(t.splitlines(), 1):
+                if bad in line:
+                    violations.append(
+                        f"BLOCKLISTED '{bad}' in {f}:{ln}: {line.strip()[:90]}")
+    for label, val in anchors:
+        if val not in joined:
+            violations.append(
+                f"MISSING anchor: {label} = {val} appears in no prose file "
+                f"(prose disagrees with the tables)")
+    return violations
+
+
+def _collect_prose_files(explicit, paper1_tables) -> List[str]:
+    """Resolve the prose .tex files to lint: explicit paths/dirs if given,
+    else auto-discover Paper 1's sections/ + main.tex next to the tables dir."""
+    out: List[str] = []
+    if explicit:
+        for p in explicit:
+            p = Path(p)
+            if p.is_dir():
+                out += [str(x) for x in sorted(p.rglob("*.tex"))]
+            elif p.exists():
+                out.append(str(p))
+    elif paper1_tables:
+        base = Path(paper1_tables).parent  # .../paper/
+        secs = base / "sections"
+        if secs.is_dir():
+            out += [str(x) for x in sorted(secs.glob("*.tex"))]
+        if (base / "main.tex").exists():
+            out.append(str(base / "main.tex"))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1001,6 +1100,11 @@ def main():
                     help="Paper 2 tables/ directory to write")
     ap.add_argument("--dry_run", action="store_true",
                     help="Print to stdout instead of writing files")
+    ap.add_argument("--check_prose", type=Path, nargs="*", default=None,
+                    help="Prose .tex files/dirs to lint for number consistency. "
+                         "If omitted, Paper 1's sections/ + main.tex are auto-discovered.")
+    ap.add_argument("--strict", action="store_true",
+                    help="Exit non-zero if the prose consistency lint finds violations.")
     args = ap.parse_args()
 
     print(f"[fill_tables] Loading evaluation JSONs from {args.results_root}")
@@ -1053,6 +1157,23 @@ def main():
 
     write_or_print(args.paper1_tables, p1_tables, "Paper 1")
     write_or_print(args.paper2_tables, p2_tables, "Paper 2")
+
+    # Prose consistency lint (reviewer #1: fail if prose disagrees with tables)
+    prose_files = _collect_prose_files(args.check_prose, args.paper1_tables)
+    if prose_files:
+        anchors = gen_canonical_anchors(results)
+        violations = check_prose(anchors, PROSE_BLOCKLIST, prose_files)
+        print(f"\n[fill_tables] Prose lint: {len(prose_files)} files, "
+              f"{len(anchors)} anchors, {len(PROSE_BLOCKLIST)} blocklisted values.")
+        if violations:
+            print("[fill_tables] PROSE CONSISTENCY LINT — VIOLATIONS:")
+            for v in violations:
+                print("  X " + v)
+            if args.strict:
+                raise SystemExit("[fill_tables] Prose lint failed (--strict).")
+        else:
+            print("[fill_tables] Prose lint clean: every headline number matches "
+                  "the tables and no stale value is present.")
 
     print("\n[fill_tables] Done. Remember to re-compile both PDFs.")
 

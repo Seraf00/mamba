@@ -67,9 +67,13 @@ explored sequence-aware models on CAMUS half-cycle annotations
 benchmark.
 
 EchoNet-Dynamic \citep{ouyang2020} provides a complementary large-scale
-video dataset for EF regression; we focus on CAMUS as the standard
-benchmark for \emph{segmentation-derived} EF, but our findings about
-architectural trade-offs are likely to transfer.
+video dataset for EF regression. We focus on CAMUS as the standard
+benchmark for \emph{segmentation-derived} EF. Because EchoNet-Dynamic
+annotates only the left-ventricular endocardium in a single apical view,
+it cannot exercise the LV-epicardium, left-atrium, or biplane-EF
+components of our protocol; whether the architectural trade-offs reported
+here transfer to other echocardiographic cohorts is therefore a question
+we leave to future cross-dataset work rather than a claim we make here.
 
 \subsection{What is missing}
 \label{sec:related-gap}

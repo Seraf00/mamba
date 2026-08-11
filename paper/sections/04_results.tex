@@ -74,8 +74,13 @@ Table~\ref{tab:ef} reports biplane Simpson's EF error per architecture.
 
 \paragraph{Best EF agreement.}
 \textbf{nnU-Net} produces the most accurate EF estimates (MAE $= 6.10\%$,
-$r = 0.787$, Bland--Altman bias $-0.30\%$), in echocardiographer
-inter-observer territory ($\sim$$7$--$10\%$). UNet-V1
+$r = 0.787$, Bland--Altman bias $-0.30\%$, 95\% limits of agreement
+$[-17.4, +16.8]\%$). The near-zero mean bias is comparable to reported
+echocardiographer inter-observer LVEF error ($\sim$$7$--$10\%$), but the
+wide limits of agreement show that per-patient agreement remains looser
+than the mean error alone suggests; we therefore read this as a
+mask-derived, like-for-like comparison rather than a claim of clinical
+parity. UNet-V1
 (MAE $= 6.78\%$, $r = 0.793$) follows, with TransUNet attaining the
 highest EF correlation ($r = 0.824$). The Transformer-only Swin-UNet shows
 degraded EF performance (MAE $= 10.46\%$, $r = 0.574$) despite competitive
@@ -150,13 +155,23 @@ this benchmark are the larger-magnitude ones --- the boundary accuracy
 discussed in Section~\ref{sec:discussion}.
 
 The critical-difference diagram of Figure~\ref{fig:cd} renders the
-banding visually.
+banding visually: architectures joined by a horizontal bar are not
+significantly different in average per-sample rank. Average rank need
+not track mean Dice --- TransUNet attains the best mean Dice yet only a
+middling average rank ($4.09$, sixth of nine), because it wins many
+samples by small margins while occasionally losing by larger ones. It
+nonetheless falls inside the same top clique as the leading CNNs, which
+reinforces that the top tier is a statistically equivalent band rather
+than a strict order.
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.95\linewidth]{figures/fig_cd_diagram}
 \caption{Critical-difference diagram (average ranks on per-sample Dice,
-Nemenyi test). Lower average rank is better.}
+Nemenyi test, $\alpha = 0.05$). Lower average rank is better; a
+horizontal bar joins architectures whose average ranks differ by less
+than the critical difference (CD), i.e.\ that are not significantly
+different.}
 \label{fig:cd}
 \end{figure}
 

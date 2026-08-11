@@ -4,23 +4,25 @@
 \begin{table}[t]
 \centering
 \caption{Biplane Simpson's ejection fraction (EF) metrics on the CAMUS
-test set. Best per column in \textbf{bold}.}
+test set. Bias and the 95\% limits of agreement (LoA) are the
+Bland--Altman statistics against reference EF over the 50 test patients.
+Best per column in \textbf{bold}.}
 \label{tab:ef}
 \small
 \setlength{\tabcolsep}{6pt}
-\begin{tabular}{l c c c}
+\begin{tabular}{l c c c c}
 \toprule
-Architecture       & {MAE (\%)} & {$r$} & {Bias (\%)} \\
+Architecture       & {MAE (\%)} & {$r$} & {Bias (\%)} & {95\% LoA (\%)} \\
 \midrule
-nnU-Net            & \textbf{6.10} & 0.787 & -0.30 \\
-UNet-V1            & 6.78 & 0.793 & -0.74 \\
-TransUNet          & 7.30 & \textbf{0.824} & -3.74 \\
-UNet-V2            & 7.60 & 0.728 & -1.20 \\
-UNet-ResNet        & 7.60 & 0.775 & -2.84 \\
-DeepLabV3+         & 8.88 & 0.743 & -6.76 \\
-FPN-UNet           & 9.94 & 0.700 & -8.34 \\
-Swin-UNet          & 10.46 & 0.574 & -4.10 \\
-DenseContextU-Net  & 16.24 & 0.434 & -11.72 \\
+nnU-Net            & \textbf{6.10} & 0.787 & -0.30 & [-17.4, +16.8] \\
+UNet-V1            & 6.78 & 0.793 & -0.74 & [-18.1, +16.6] \\
+TransUNet          & 7.30 & \textbf{0.824} & -3.74 & [-20.8, +13.3] \\
+UNet-V2            & 7.60 & 0.728 & -1.20 & [-20.7, +18.3] \\
+UNet-ResNet        & 7.60 & 0.775 & -2.84 & [-21.0, +15.3] \\
+DeepLabV3+         & 8.88 & 0.743 & -6.76 & [-24.7, +11.2] \\
+FPN-UNet           & 9.94 & 0.700 & -8.34 & [-28.3, +11.6] \\
+Swin-UNet          & 10.46 & 0.574 & -4.10 & [-31.0, +22.8] \\
+DenseContextU-Net  & 16.24 & 0.434 & -11.72 & [-48.3, +24.9] \\
 \bottomrule
 \end{tabular}
 \end{table}

@@ -99,6 +99,39 @@ def _variant(name: str) -> str:
     return "base"
 
 
+# Canonical human-readable display names (fixes informal casing like
+# "nnunet" / "deeplab v3" that the CD-diagram and Pareto figures showed).
+DISPLAY_NAMES = {
+    "unet_v1": "UNet-V1", "unet_v2": "UNet-V2", "unet_resnet": "UNet-ResNet",
+    "deeplab_v3": "DeepLabV3+", "nnunet": "nnU-Net",
+    "dense_context_unet": "DenseContextU-Net", "fpn": "FPN-UNet",
+    "swin_unet": "Swin-UNet", "transunet": "TransUNet",
+}
+
+_SSM_SUFFIX = (("_vmamba", "+VMamba"), ("_mamba2", "+Mamba2"), ("_mamba", "+Mamba"))
+
+
+def _pretty(name: str) -> str:
+    """Human-readable label for a model key, in both papers.
+
+    ``nnunet`` -> ``nnU-Net``; ``mamba_unet_resnet_mamba2`` ->
+    ``UNet-ResNet +Mamba2``.
+    """
+    if name in DISPLAY_NAMES:
+        return DISPLAY_NAMES[name]
+    n = name
+    variant = ""
+    for suf, lab in _SSM_SUFFIX:
+        if n.endswith(suf):
+            variant = " " + lab
+            n = n[: -len(suf)]
+            break
+    if n.startswith("mamba_"):
+        n = n[len("mamba_"):]
+    base = DISPLAY_NAMES.get(n, n.replace("_", " "))
+    return base + variant
+
+
 def _savefig(fig, out_dirs: List[Path], stem: str):
     for d in out_dirs:
         if d is None:
@@ -147,8 +180,7 @@ def fig_pareto(results: Dict[str, Dict], out_dirs: List[Path],
     fy = [d for _, d in front]
     ax.plot(fx, fy, "--", color="#c0392b", lw=1.4, zorder=2, label="Pareto front")
     for p, d, k in pts:
-        lab = k.replace("mamba_", "").replace("_", " ")
-        ax.annotate(lab, (p, d), fontsize=6.2, xytext=(3, 3),
+        ax.annotate(_pretty(k), (p, d), fontsize=6.2, xytext=(3, 3),
                     textcoords="offset points", alpha=0.8)
     ax.set_xscale("log")
     ax.set_xlabel("Parameters (M, log scale)")
@@ -361,20 +393,37 @@ def _nemenyi_cd(k: int, n: int, alpha: float = 0.05) -> float:
     return q * np.sqrt(k * (k + 1) / (6.0 * n))
 
 
+def _cliques(avg: np.ndarray, cd: float) -> List[Tuple[int, int]]:
+    """Maximal groups of consecutive (rank-sorted) methods whose average-rank
+    span is within the critical difference -- the bars of a Demsar diagram."""
+    k = len(avg)
+    raw = []
+    for i in range(k):
+        j = i
+        while j + 1 < k and (avg[j + 1] - avg[i]) <= cd:
+            j += 1
+        if j > i:
+            raw.append((i, j))
+    maximal = []
+    for a, b in raw:
+        if not any((a2 <= a and b < b2) or (a2 < a and b <= b2)
+                   for a2, b2 in raw):
+            maximal.append((a, b))
+    return maximal
+
+
 def fig_cd_diagram(results: Dict[str, Dict], out_dirs: List[Path],
                    keys: List[str], stem: str, top_n: int = 15):
     # Gather models with per_sample_dice
     have = [(k, np.asarray(results[k]["per_sample_dice"]))
             for k in keys
             if results.get(k, {}).get("per_sample_dice")]
-    # keep only those sharing the same N
     if not have:
         print(f"[skip] {stem}: no per_sample_dice arrays in JSON "
               f"(add them in evaluate_all_models.py)")
         return
     n_common = min(len(v) for _, v in have)
     have = [(k, v[:n_common]) for k, v in have]
-    # rank by mean Dice, keep top_n
     have.sort(key=lambda kv: -kv[1].mean())
     have = have[:top_n]
     names = [k for k, _ in have]
@@ -384,8 +433,7 @@ def fig_cd_diagram(results: Dict[str, Dict], out_dirs: List[Path],
         print(f"[skip] {stem}: need >=3 models with per-sample Dice")
         return
 
-    # average ranks (higher Dice = rank 1)
-    # rank per sample across models
+    # Average ranks across samples (rank 1 = best Dice on that sample).
     ranks = np.zeros_like(mat)
     for s in range(n):
         order = (-mat[:, s]).argsort()
@@ -395,33 +443,64 @@ def fig_cd_diagram(results: Dict[str, Dict], out_dirs: List[Path],
     avg_rank = ranks.mean(axis=1)
     cd = _nemenyi_cd(k, n)
 
-    # Plot CD diagram
+    # Sort best -> worst by average rank.
     order = avg_rank.argsort()
-    names = [names[i] for i in order]
-    avg_rank = avg_rank[order]
+    avg = avg_rank[order]
+    disp = [_pretty(names[i]) for i in order]
 
-    fig, ax = plt.subplots(figsize=(8, 0.4 * k + 1.5))
-    lo, hi = 1, k
-    ax.set_xlim(lo - 0.5, hi + 0.5)
-    ax.set_ylim(0, k + 1)
-    ax.invert_yaxis()
-    for i, (nm, rk) in enumerate(zip(names, avg_rank)):
-        y = i + 1
-        ax.plot([lo - 0.5, rk], [y, y], color="#bbb", lw=0.7, zorder=1)
-        ax.scatter([rk], [y], s=30, color="#3b6ea5", zorder=2)
-        ax.text(lo - 0.6, y, nm.replace("mamba_", "").replace("_", " "),
-                ha="right", va="center", fontsize=7)
-        ax.text(rk + 0.05, y, f"{rk:.2f}", va="center", fontsize=6.5,
-                color="#555")
-    # CD bar
-    ax.plot([lo, lo + cd], [0.4, 0.4], color="#c0392b", lw=2.5)
-    ax.text(lo + cd / 2, 0.2, f"CD = {cd:.2f}", ha="center", fontsize=8,
-            color="#c0392b")
-    ax.set_xlabel("Average rank (lower = better)")
-    ax.set_yticks([])
-    ax.set_title("Critical-difference diagram (per-sample Dice, Nemenyi $\\alpha$=0.05)",
-                 fontsize=10)
-    ax.grid(True, axis="x", alpha=0.2)
+    # ---- Standard horizontal Demsar critical-difference diagram ----
+    lo, hi = 1, int(np.ceil(avg.max()))
+    half = (k + 1) // 2
+    fig, ax = plt.subplots(figsize=(9.5, 1.6 + 0.42 * half))
+    ax.set_xlim(lo - 0.5, hi + 0.6)
+    ytop = half + 1.2
+    ax.set_ylim(0, ytop + 1.1)
+    ax.axis("off")
+
+    # Top rank axis with integer ticks.
+    ax.plot([lo, hi], [ytop, ytop], color="k", lw=1.1)
+    for xr in range(lo, hi + 1):
+        ax.plot([xr, xr], [ytop, ytop + 0.10], color="k", lw=1.0)
+        ax.text(xr, ytop + 0.20, str(xr), ha="center", va="bottom", fontsize=8)
+    ax.text((lo + hi) / 2, ytop + 0.62, "Average rank (lower is better)",
+            ha="center", va="bottom", fontsize=9)
+
+    # CD ruler above the axis.
+    ax.plot([lo, lo + cd], [ytop + 0.85, ytop + 0.85], color="#c0392b", lw=2.2)
+    for xx in (lo, lo + cd):
+        ax.plot([xx, xx], [ytop + 0.80, ytop + 0.90], color="#c0392b", lw=1.4)
+    ax.text(lo + cd / 2, ytop + 0.95, f"CD = {cd:.2f}", ha="center",
+            va="bottom", fontsize=8, color="#c0392b")
+
+    # Method leaders: best half labelled on the left, worst half on the right.
+    def leader(i, row, side):
+        r = avg[i]
+        y = ytop - 0.55 - row * 0.62
+        ax.plot([r, r], [ytop, y], color="#3b6ea5", lw=1.0)
+        if side == "left":
+            ax.plot([r, lo - 0.5], [y, y], color="#3b6ea5", lw=1.0)
+            ax.text(lo - 0.55, y, f"{disp[i]} ({r:.2f})",
+                    ha="right", va="center", fontsize=8)
+        else:
+            ax.plot([r, hi + 0.6], [y, y], color="#3b6ea5", lw=1.0)
+            ax.text(hi + 0.65, y, f"({r:.2f}) {disp[i]}",
+                    ha="left", va="center", fontsize=8)
+
+    for row, i in enumerate(range(half)):            # best half, left
+        leader(i, row, "left")
+    for row, i in enumerate(range(k - 1, half - 1, -1)):  # worst half, right
+        leader(i, row, "right")
+
+    # Clique bars: connect methods that are NOT significantly different.
+    ybar = ytop - 0.16
+    for level, (a, b) in enumerate(_cliques(avg, cd)):
+        yy = ybar - level * 0.14
+        ax.plot([avg[a] - 0.06, avg[b] + 0.06], [yy, yy],
+                color="#c0392b", lw=3.2, solid_capstyle="round")
+
+    ax.set_title("Critical-difference diagram (per-sample Dice, "
+                 "Nemenyi $\\alpha=0.05$). Bars join methods with no "
+                 "significant difference.", fontsize=9.5)
     _savefig(fig, out_dirs, stem)
 
 
