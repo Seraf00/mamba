@@ -3,8 +3,8 @@
 %
 % Target: Medical Image Analysis, single-column, ~10–15 pages, Harvard
 %         author-year citations.
-% Status: draft — sections with [TODO/PLACEHOLDER] markers are awaiting
-%         data from the current Colab pipeline.
+% Status: data-complete. Only remaining author task is the funding line
+%         in the Acknowledgements.
 %==============================================================================
 
 \documentclass[review,1p,times]{elsarticle}
@@ -24,7 +24,8 @@
 \usepackage{subcaption}
 % Note: elsarticle already loads natbib; do not load it again.
 
-% TODO markers
+% Draft-review annotation commands (only \TODO remains in use, for the
+% single outstanding funding line in the Acknowledgements)
 \newcommand{\TODO}[1]{\textcolor{red}{\textbf{[TODO: #1]}}}
 \newcommand{\PLACE}[1]{\textcolor{orange}{\textbf{[PLACEHOLDER: #1]}}}
 \newcommand{\REVIEW}[1]{\textcolor{blue}{\textbf{[REVIEW: #1]}}}
@@ -49,7 +50,6 @@
        From CNNs to Transformers}
 
 % ---------- Authors -----------------------------------------------------------
-% TODO: replace First/Second/Corresponding Author and addresses before submission.
 \author[a]{Fares Sofiane Mazouni\corref{cor1}}
 \ead{faressofiane.mazouni@univ-tebessa.dz}
 \cortext[cor1]{Corresponding author.}
@@ -65,7 +65,6 @@
 
 
 \address[a]{Laboratory of Mathematics, Informatics and Systems (LAMIS), Echahid Cheikh Larbi Tebessi University, Tebessa, 12002, Algeria}
-%\address[b]{Secondary affiliation if any (TODO)}
 
 % ---------- Abstract ----------------------------------------------------------
 \begin{abstract}
@@ -140,10 +139,15 @@ The CAMUS dataset is publicly available from
 \url{https://www.creatis.insa-lyon.fr/Challenge/camus/}. Training,
 evaluation, and analysis code; trained model checkpoints; and all
 intermediate JSON / CSV outputs supporting this paper are released at
-\url{https://github.com/TODO/repo}. % TODO: replace with real repo URL
+\url{https://github.com/Seraf00/mamba}.
 
 \section*{Acknowledgements}
-\TODO{Funding sources, compute, clinical reviewers, dataset providers.}
+The authors thank the CAMUS challenge organisers (CREATIS, INSA Lyon) for
+making the dataset publicly available. All model training and evaluation
+were performed on Google Colab Pro (NVIDIA L4 and A100 GPUs).
+\TODO{Add funding sources / grant numbers if any, and acknowledge any
+clinical collaborator who verified the ejection-fraction pipeline; delete
+this note if not applicable.}
 
 %==============================================================================
 % Bibliography

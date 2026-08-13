@@ -50,7 +50,11 @@ TransUNet again leads with HD95 $= 1.82$~mm, followed by UNet-ResNet and
 nnU-Net (both $1.93$~mm), UNet-V1 ($2.13$~mm), Swin-UNet ($2.01$~mm), and
 UNet-V2 ($2.33$~mm). The published CAMUS nnU-Net baseline of
 $\approx 4.3$~mm \citep{leclerc2019} is improved on by every architecture
-in this benchmark by a factor of $\sim$$2$; we attribute most of this gap
+in this benchmark by a factor of $\sim$$2$. That figure was reported under
+the original CAMUS evaluation convention, which differs from our
+per-sample HD95; the cross-paper comparison is therefore indicative of
+protocol-level progress rather than a strictly like-for-like gain. We
+attribute most of this gap
 to training-protocol modernisation (cosine annealing, mixed precision,
 boundary loss) rather than to architectural changes
 (Section~\ref{sec:discussion}).

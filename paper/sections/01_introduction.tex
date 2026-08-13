@@ -37,9 +37,11 @@ Three paradigms have emerged as competitive solutions in this space:
       explicitly trading off local detail (CNN) against global context
       (self-attention).
 \item \textbf{Pure Transformer networks.} Swin-UNet \citep{cao2022}
-      replaces the convolutional backbone entirely with windowed
-      self-attention, demonstrating that pure attention can match or
-      exceed CNN performance on a range of medical tasks.
+      replaces the convolutional \emph{backbone} with a hierarchy of
+      windowed self-attention blocks --- retaining only a shallow
+      convolutional patch-embedding stem --- demonstrating that
+      predominantly attention-based encoders can match or exceed CNN
+      performance on a range of medical tasks.
 \end{itemize}
 
 \paragraph{The benchmarking gap.}
