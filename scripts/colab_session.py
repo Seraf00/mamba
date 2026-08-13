@@ -333,7 +333,11 @@ def main():
     display_map = {m["name"]: m["display_name"] for m in models_info}
 
     quality_all: Dict[str, Dict] = {}
-    for info in models_info:
+    per_model = [] if (args.skip_ef and args.skip_quality) else models_info
+    if not per_model:
+        print("\n[colab_session] Both --skip_ef and --skip_quality set; "
+              "skipping the per-model pass (qualitative grid only).")
+    for info in per_model:
         name, disp = info["name"], info["display_name"]
         print(f"\n=== {disp} ===")
         img_size = get_img_size(name)
