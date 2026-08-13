@@ -26,12 +26,12 @@ ahead of \textbf{nnU-Net} ($0.9099$, $\Delta = 0.0023$), \textbf{UNet-ResNet}
 are tightly clustered within $\Delta\text{Dice} \le 0.004$ ---
 within the Bonferroni-corrected statistical-significance band
 (Section~\ref{sec:results-significance}). Below this band,
-\textbf{UNet-V2} ($0.8963$) and \textbf{Swin-UNet} ($0.8878$) form a
+\textbf{UNet-V2} ($0.8963$) and \textbf{Swin-UNet} ($0.8882$) form a
 mid-tier, and \textbf{FPN-UNet} ($0.8619$), \textbf{DeepLabV3+}
-($0.8569$), and \textbf{DenseContextU-Net} ($0.8522$) trail.
+($0.8570$), and \textbf{DenseContextU-Net} ($0.8505$) trail.
 
 \paragraph{Per-class.}
-LV-endo Dice ranges $0.8983$ (DenseContextU-Net) to $0.9371$ (nnU-Net);
+LV-endo Dice ranges $0.8977$ (DenseContextU-Net) to $0.9370$ (nnU-Net);
 LA Dice ranges $0.8477$ (DeepLabV3+) to $0.9213$ (TransUNet);
 LV-epi is consistently the hardest class for every architecture (mean
 across models: $\Dice \approx 0.84$).
@@ -47,7 +47,7 @@ pixel spacing.
 
 \paragraph{HD95.}
 TransUNet again leads with HD95 $= 1.82$~mm, followed by UNet-ResNet and
-nnU-Net (both $1.93$~mm), UNet-V1 ($2.13$~mm), Swin-UNet ($2.02$~mm), and
+nnU-Net (both $1.93$~mm), UNet-V1 ($2.13$~mm), Swin-UNet ($2.01$~mm), and
 UNet-V2 ($2.33$~mm). The published CAMUS nnU-Net baseline of
 $\approx 4.3$~mm \citep{leclerc2019} is improved on by every architecture
 in this benchmark by a factor of $\sim$$2$; we attribute most of this gap
@@ -122,6 +122,15 @@ within training variance, Section~\ref{sec:results-significance}) costs
 $6.5\times$ the parameters and $\approx 3.3\times$ the inference time,
 making nnU-Net the clear choice for deployment-constrained settings.
 Figure~\ref{fig:pareto} renders the trade-off as a scatter plot.
+
+Table~\ref{tab:efficiency} also exposes a cautionary outlier: at $2.2$~M
+parameters DenseContextU-Net is by far the smallest model, yet it records
+the highest compute ($143.7$~GFLOPs) and the slowest inference
+($25.8$~ms) of any architecture in the benchmark. This is a direct
+consequence of dense connectivity, which repeatedly concatenates and
+re-convolves feature maps at high spatial resolution; parameter count is
+therefore a poor proxy for either compute or latency, and the smallest
+network here is in practice the most expensive to run.
 
 \begin{figure}[t]
 \centering

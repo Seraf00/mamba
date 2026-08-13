@@ -87,10 +87,12 @@ All nine architectures share a single training protocol:
       instances.
 \end{itemize}
 
-Per-model batch sizes are reported in Table~\ref{tab:archs} and were
-selected to maximise GPU utilisation within memory limits. We did
-\emph{not} perform per-architecture hyperparameter search: the goal is
-explicit cross-architecture comparison under one shared protocol.
+All nine architectures were trained with a \emph{uniform} batch size of
+$32$ --- the largest value that fits every model within the training-GPU
+memory budget --- rather than a per-architecture batch size, so that the
+optimisation regime is held as constant as possible across the comparison.
+We did \emph{not} perform per-architecture hyperparameter search: the goal
+is explicit cross-architecture comparison under one shared protocol.
 
 \subsection{Evaluation metrics}
 \label{sec:methods-metrics}

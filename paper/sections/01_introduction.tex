@@ -50,8 +50,8 @@ typically compares against a small number of baselines under different
 training protocols, augmentations, learning-rate schedules, and
 evaluation metrics. As a result it is difficult for clinicians or
 practitioners to answer a basic question: \emph{which architectural
-family should I use for echocardiographic segmentation, and what are
-the trade-offs?}
+family should I use for CAMUS-style apical 2D echocardiographic
+segmentation, and what are the trade-offs?}
 
 This paper provides that comparison on the CAMUS dataset
 \citep{leclerc2019}, the standard public 2D echocardiographic
@@ -64,9 +64,10 @@ geometric, boundary, clinical, and efficiency metrics simultaneously.
 
 \paragraph{Contributions.}
 \begin{itemize}[leftmargin=*,nosep]
-\item We present the largest unified benchmark of deep segmentation
-      architectures on CAMUS to date: nine architectures across three
-      paradigms, trained and evaluated under a single shared protocol.
+\item We present the first unified, like-for-like benchmark of deep
+      segmentation architectures on CAMUS across the three major paradigms:
+      nine architectures spanning pure CNN, hybrid CNN--Transformer, and
+      pure Transformer, trained and evaluated under a single shared protocol.
 
 \item We report \emph{multi-dimensional} evaluation, going beyond Dice
       to include HD95 in millimetres (with per-sample NIfTI pixel

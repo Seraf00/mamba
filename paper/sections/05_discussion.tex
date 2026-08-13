@@ -16,7 +16,7 @@ and is faster) or by the clinical objective (nnU-Net is more accurate at
 EF and tighter at Bland--Altman bias).
 
 The pure-Transformer family (Swin-UNet) is competitive on bulk Dice
-($0.8878$) but visibly worse on EF (MAE $10.46\%$, $r = 0.574$). This
+($0.8882$) but visibly worse on EF (MAE $10.46\%$, $r = 0.574$). This
 finding is consistent with reports that pure-attention models, despite
 strong overall overlap, can produce boundary contours that are subtly
 biased \citep{chen2021transunet} --- an effect that compounds when
@@ -62,11 +62,17 @@ Aggregating across our nine architectures, several design choices
 correlate with strong performance:
 
 \begin{itemize}[leftmargin=*,nosep]
-\item \textbf{Pretrained encoders} (TransUNet, UNet-ResNet, Swin-UNet,
-      FPN-UNet, DeepLabV3+). The two highest-Dice non-nnU-Net models use
-      pretrained encoders. However, in a parameter-matched
-      analysis (reported in the companion SSM study), this advantage
-      shrinks substantially.
+\item \textbf{Pretrained encoders.} Five of the nine architectures
+      initialise their encoder from ImageNet or BiT weights (TransUNet,
+      UNet-ResNet, Swin-UNet, FPN-UNet, DeepLabV3+; Table~\ref{tab:archs}).
+      Pretraining is nonetheless neither necessary nor sufficient for
+      top-tier accuracy on CAMUS: the two scratch-trained models nnU-Net and
+      UNet-V1 place second and fourth on mean Dice --- ahead of the
+      pretrained Swin-UNet, FPN-UNet, and DeepLabV3+ --- and nnU-Net also
+      attains the best EF agreement at roughly one-sixth of TransUNet's
+      parameter count. Encoder pretraining thus appears to help mainly where
+      an architecture's from-scratch inductive bias is weaker, rather than
+      conferring a uniform advantage on this dataset.
 \item \textbf{Deep skip connections} (every U-Net-shaped architecture
       except DeepLabV3+). DeepLabV3+'s lightweight decoder, while
       efficient, appears to limit high-resolution boundary precision on
