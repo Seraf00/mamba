@@ -1,0 +1,30 @@
+%==============================================================================
+% Paper 1 / T5 -- quality-stratified Dice (auto-generated from
+% quality_stratified.json produced by colab_session.py)
+%==============================================================================
+\begin{table}[t]
+\centering
+\caption{Mean Dice on the CAMUS test split stratified by the
+expert-assigned image-quality grade (Good $n{=}94$, Medium $n{=}76$, Poor $n{=}30$ test frames). Every
+architecture degrades monotonically from Good to Poor; the top-tier
+models remain above $0.88$ even on Poor-quality images. Best per column
+in \textbf{bold}.}
+\label{tab:quality}
+\small
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{l c c c}
+\toprule
+Architecture & {Good} & {Medium} & {Poor} \\
+\midrule
+TransUNet          & \textbf{0.9186} & 0.9097 & \textbf{0.8988} \\
+nnU-Net            & 0.9168 & 0.9091 & 0.8903 \\
+UNet-V1            & 0.9173 & 0.9070 & 0.8848 \\
+UNet-ResNet        & 0.9156 & \textbf{0.9142} & 0.8734 \\
+UNet-V2            & 0.9091 & 0.8921 & 0.8672 \\
+Swin-UNet          & 0.8961 & 0.8866 & 0.8675 \\
+FPN-UNet           & 0.8690 & 0.8628 & 0.8375 \\
+DeepLabV3+         & 0.8669 & 0.8555 & 0.8295 \\
+DenseContextU-Net  & 0.8641 & 0.8454 & 0.8209 \\
+\bottomrule
+\end{tabular}
+\end{table}

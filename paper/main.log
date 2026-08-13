@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.26 (MiKTeX 24.4) (preloaded format=pdflatex 2024.9.14)  11 AUG 2026 12:00
+This is pdfTeX, Version 3.141592653-2.6-1.40.26 (MiKTeX 24.4) (preloaded format=pdflatex 2024.9.14)  13 AUG 2026 03:13
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -993,35 +993,44 @@ r/m/n/10 8569$\T1/txr/m/n/10 ), and \T1/txr/bx/n/10 DenseContextU-
 
 [10] (tables/T3_edes.tex) (tables/T4_ef.tex)
 
-[11] (tables/T6_efficiency.tex)
-<figures/fig_pareto.pdf, id=294, 413.57379pt x 295.14752pt>
+[11] (tables/T5_quality.tex) (tables/T6_efficiency.tex)
+<figures/fig_pareto.pdf, id=295, 413.57379pt x 295.14752pt>
 File: figures/fig_pareto.pdf Graphic file (type pdf)
 <use figures/fig_pareto.pdf>
-Package pdftex.def Info: figures/fig_pareto.pdf  used on input line 121.
+Package pdftex.def Info: figures/fig_pareto.pdf  used on input line 128.
 (pdftex.def)             Requested size: 353.2793pt x 252.12405pt.
  (tables/T7_wilcoxon.tex
 
 [12])
 
 [13]
-<figures/fig_cd_diagram.pdf, id=311, 739.25943pt x 234.40373pt>
+<figures/fig_cd_diagram.pdf, id=313, 739.25943pt x 234.40373pt>
 File: figures/fig_cd_diagram.pdf Graphic file (type pdf)
 <use figures/fig_cd_diagram.pdf>
-Package pdftex.def Info: figures/fig_cd_diagram.pdf  used on input line 169.
+Package pdftex.def Info: figures/fig_cd_diagram.pdf  used on input line 176.
 (pdftex.def)             Requested size: 364.79883pt x 115.67073pt.
+<figures/fig_qualitative.png, id=315, 629.4717pt x 1293.633pt>
+File: figures/fig_qualitative.png Graphic file (type png)
+<use figures/fig_qualitative.png>
+Package pdftex.def Info: figures/fig_qualitative.png  used on input line 195.
+(pdftex.def)             Requested size: 246.1173pt x 505.79657pt.
+
+
+LaTeX Warning: Float too large for page by 25.04655pt on input line 204.
+
 ) (sections/05_discussion.tex
 
 [14]
 
-[15 <./figures/fig_pareto.pdf>]
-
-[16 <./figures/fig_cd_diagram.pdf>]
+[15]
 Overfull \hbox (1.76888pt too wide) in paragraph at lines 65--70
 []\T1/txr/bx/n/10 Pretrained en-coders \T1/txr/m/n/10 (Tran-sUNet, UNet-ResNet,
  Swin-UNet, FPN-UNet, DeepLabV3+). The
  []
 
 
+
+[16 <./figures/fig_pareto.pdf>]
 Overfull \hbox (8.95883pt too wide) in paragraph at lines 70--74
 []\T1/txr/bx/n/10 Deep skip con-nec-tions \T1/txr/m/n/10 (ev-ery U-Net-shaped a
 r-chi-tec-ture ex-cept DeepLabV3+). DeepLabV3+'s
@@ -1029,7 +1038,9 @@ r-chi-tec-ture ex-cept DeepLabV3+). DeepLabV3+'s
 
 
 
-[17]
+[17 <./figures/fig_cd_diagram.pdf>]
+
+[18 <./figures/fig_qualitative.png>]
 Overfull \hbox (10.5483pt too wide) in paragraph at lines 113--117
 []\T1/txr/bx/n/10 Single-dataset. \T1/txr/m/n/10 All eval-u-a-tion is on CA-MUS
 . A cross-dataset trans-fer eval-u-a-tion (\T1/txr/m/it/10 e.g., \T1/txr/m/n/10
@@ -1038,9 +1049,9 @@ Overfull \hbox (10.5483pt too wide) in paragraph at lines 113--117
 
 
 
-[18]) (sections/06_conclusion.tex
+[19]) (sections/06_conclusion.tex
 
-[19])
+[20])
 Overfull \hbox (9.31015pt too wide) in paragraph at lines 39--133
 []\T1/txr/m/n/10 We re-lease the com-plete train-ing, eval-u-a-tion, statistica
 l-analysis, and figure-generation pipeline,
@@ -1048,11 +1059,11 @@ l-analysis, and figure-generation pipeline,
 
 (main.bbl
 
-[20]
+[21]
 
-[21])
+[22])
 
-[22] (main.aux)
+[23] (main.aux)
  ***********
 LaTeX2e <2024-06-01> patch level 2
 L3 programming layer <2024-08-16>
@@ -1061,13 +1072,13 @@ Package rerunfilecheck Info: File `main.out' has not changed.
 (rerunfilecheck)             Checksum: B1045551A7529AA0F5DA430FF6C51FC4;5045.
  ) 
 Here is how much of TeX's memory you used:
- 15053 strings out of 473899
- 234900 string characters out of 5726500
- 1948960 words of memory out of 5000000
- 37513 multiletter control sequences out of 15000+600000
- 624197 words of font info for 148 fonts, out of 8000000 for 9000
+ 15071 strings out of 473899
+ 235444 string characters out of 5726500
+ 1952960 words of memory out of 5000000
+ 37527 multiletter control sequences out of 15000+600000
+ 622244 words of font info for 146 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 75i,12n,79p,493b,611s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,12n,79p,632b,611s stack positions out of 10000i,1000n,20000p,200000b,200000s
  <C:\Users\mazou\AppData\Local\MiKTeX\fonts/pk/ljfour/jknappen/ec/dpi600\ectt
 1000.pk> <C:\Users\mazou\AppData\Local\MiKTeX\fonts/pk/ljfour/jknappen/ec/dpi60
 0\ectt0800.pk><C:/Users/mazou/AppData/Local/Programs/MiKTeX/fonts/type1/public/
@@ -1081,9 +1092,9 @@ nts/type1/public/txfonts/txex.pfb><C:/Users/mazou/AppData/Local/Programs/MiKTeX
 TeX/fonts/type1/urw/times/utmb8a.pfb><C:/Users/mazou/AppData/Local/Programs/MiK
 TeX/fonts/type1/urw/times/utmr8a.pfb><C:/Users/mazou/AppData/Local/Programs/MiK
 TeX/fonts/type1/urw/times/utmri8a.pfb>
-Output written on main.pdf (22 pages, 238990 bytes).
+Output written on main.pdf (23 pages, 4129016 bytes).
 PDF statistics:
- 640 PDF objects out of 1000 (max. 8388607)
- 123 named destinations out of 1000 (max. 500000)
- 235 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 649 PDF objects out of 1000 (max. 8388607)
+ 125 named destinations out of 1000 (max. 500000)
+ 240 words of extra memory for PDF output out of 10000 (max. 10000000)
 

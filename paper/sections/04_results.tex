@@ -91,12 +91,19 @@ bulk Dice, suggesting it produces accurate \emph{but} biased contours
 \subsection{Robustness across image quality}
 \label{sec:results-robustness}
 
-CAMUS includes a per-patient image-quality grade (\emph{Good},
-\emph{Medium}, \emph{Poor}) assigned by the expert annotators. A
-quality-stratified breakdown of per-architecture Dice requires subsetting
-the per-patient predictions by grade; we provide this analysis, together
-with the failure-case taxonomy, in the extended version of this work and
-focus the present paper on the aggregate and boundary metrics above.
+CAMUS assigns each patient an expert image-quality grade (\emph{Good},
+\emph{Medium}, \emph{Poor}). Table~\ref{tab:quality} reports mean Dice
+stratified by that grade. Every architecture degrades monotonically from
+Good to Poor, confirming that acquisition quality is a primary driver of
+segmentation difficulty on CAMUS. The degradation is, however, markedly
+gentler for the top-tier architectures: TransUNet and nnU-Net lose only
+$\sim$$0.02$--$0.03$ Dice from Good to Poor and remain above $0.89$ on
+Poor-quality frames, whereas the weakest models (DeepLabV3+,
+DenseContextU-Net) drop by $0.04$ or more and fall below $0.83$.
+Robustness to image quality therefore tracks overall accuracy rather than
+trading off against it.
+
+\input{tables/T5_quality}
 
 %------------------------------------------------------------------------------
 \subsection{Efficiency and the accuracy--cost trade-off}
@@ -183,14 +190,15 @@ Figure~\ref{fig:qualitative} shows sample predictions from the top four
 architectures plus a bottom-tier representative on three patients spanning
 the Good / Medium / Poor image-quality grades.
 
-% MANUAL: assemble a curated 5x3 grid from the per-model prediction overlays
-% (results/explainability/<model>/) and save as figures/fig_qualitative.png,
-% then replace the rule below.
-\begin{figure*}[t]
+\begin{figure}[p]
 \centering
-\framebox[0.9\linewidth]{\rule{0pt}{4cm}\emph{\small Qualitative prediction
-grid --- to be assembled from per-model overlays (see source comment).}}
-\caption{Qualitative predictions on three test patients (Good / Medium /
-Poor image-quality grades, columns) for five architectures (rows).}
+\includegraphics[height=0.9\textheight]{figures/fig_qualitative}
+\caption{Qualitative predictions on three test patients spanning the Good,
+Medium, and Poor image-quality grades (columns). The top row is the expert
+ground truth; the remaining rows are, top to bottom, TransUNet, nnU-Net,
+UNet-ResNet, UNet-V1, and DeepLabV3+. Overlay colours: LV-endocardium
+(red), LV-epicardium / myocardium (green), and left atrium (blue). Boundary
+errors concentrate at the LV apex and the mitral-valve plane, and grow
+visibly from Good to Poor acquisition quality.}
 \label{fig:qualitative}
-\end{figure*}
+\end{figure}

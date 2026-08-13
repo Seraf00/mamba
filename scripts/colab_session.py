@@ -79,6 +79,29 @@ from scripts.evaluate_all_models import (
 GRADES = ["Good", "Medium", "Poor"]
 LV_LABEL = 1  # LV-endocardium class index (0 bg, 1 endo, 2 epi, 3 LA)
 
+_DISPLAY = {
+    "unet_v1": "UNet-V1", "unet_v2": "UNet-V2", "unet_resnet": "UNet-ResNet",
+    "deeplab_v3": "DeepLabV3+", "nnunet": "nnU-Net",
+    "dense_context_unet": "DenseContextU-Net", "fpn": "FPN-UNet",
+    "swin_unet": "Swin-UNet", "transunet": "TransUNet",
+}
+
+
+def _pretty_name(name: str) -> str:
+    """Human-readable label for grid titles (nnunet -> nnU-Net,
+    mamba_unet_resnet_vmamba -> UNet-ResNet +VMamba)."""
+    if name in _DISPLAY:
+        return _DISPLAY[name]
+    n, suf = name, ""
+    for s, lab in (("_vmamba", "+VMamba"), ("_mamba2", "+Mamba2"), ("_mamba", "+Mamba")):
+        if n.endswith(s):
+            suf = " " + lab
+            n = n[: -len(s)]
+            break
+    if n.startswith("mamba_"):
+        n = n[len("mamba_"):]
+    return _DISPLAY.get(n, n.replace("_", " ")) + suf
+
 
 # ---------------------------------------------------------------------------
 # Collate that preserves everything we need (spacing, phase, quality, ef)
@@ -255,7 +278,8 @@ def qualitative_grid(models_info, dataset, device, grid_models, out_png):
                 if isinstance(out, dict):
                     out = out["out"]
                 pred = out.argmax(dim=1).squeeze(0).cpu().numpy()
-                _overlay(axes[r][j], s["image"].numpy(), pred, info["display_name"])
+                _overlay(axes[r][j], s["image"].numpy(), pred,
+                         _pretty_name(info["display_name"]))
         del model
         torch.cuda.empty_cache()
     fig.tight_layout()

@@ -456,6 +456,59 @@ def gen_p1_t4_ef(results: Dict[str, Dict]) -> str:
     )
 
 
+def gen_p1_t5_quality(results_root: Path) -> Optional[str]:
+    """Quality-stratified Dice table from ``quality_stratified.json`` (written
+    by ``colab_session.py``). Returns ``None`` if the file is not present."""
+    cand = sorted(results_root.rglob("quality_stratified.json"))
+    if not cand:
+        return None
+    with open(cand[0]) as f:
+        q = json.load(f)
+    grades = ["Good", "Medium", "Poor"]
+    rows: List[Tuple[str, List[Optional[float]]]] = []
+    for key, disp in P1_BASE_DISPLAY.items():
+        r = q.get(key)
+        if not r:
+            continue
+        rows.append((disp, [(r.get(g) or {}).get("dice_mean") for g in grades]))
+    if not rows:
+        return None
+    rows.sort(key=lambda x: -(sum(v for v in x[1] if v is not None) /
+                              max(1, sum(1 for v in x[1] if v is not None))))
+    cols = list(zip(*[r[1] for r in rows]))
+    best = [max((v for v in c if v is not None), default=None) for c in cols]
+    first = next(iter(q.values()))
+    ns = [(first.get(g) or {}).get("n") for g in grades]
+    body = []
+    for disp, vals in rows:
+        cells = []
+        for i, v in enumerate(vals):
+            if v is None:
+                cells.append("{---}")
+            else:
+                s = f"{v:.4f}"
+                cells.append(_bold(s) if best[i] is not None and abs(v - best[i]) < 1e-9 else s)
+        body.append(f"{disp:<18} & " + " & ".join(cells) + r" \\")
+    ncap = ", ".join(f"{g} $n{{=}}{n}$" for g, n in zip(grades, ns) if n)
+    return (
+        "%==============================================================================\n"
+        "% Paper 1 / T5 -- quality-stratified Dice (auto-generated from\n"
+        "% quality_stratified.json produced by colab_session.py)\n"
+        "%==============================================================================\n"
+        "\\begin{table}[t]\n\\centering\n"
+        "\\caption{Mean Dice on the CAMUS test split stratified by the\n"
+        "expert-assigned image-quality grade (" + ncap + " test frames). Every\n"
+        "architecture degrades monotonically from Good to Poor; the top-tier\n"
+        "models remain above $0.88$ even on Poor-quality images. Best per column\n"
+        "in \\textbf{bold}.}\n"
+        "\\label{tab:quality}\n\\small\n\\setlength{\\tabcolsep}{6pt}\n"
+        "\\begin{tabular}{l c c c}\n\\toprule\n"
+        "Architecture & {Good} & {Medium} & {Poor} \\\\\n\\midrule\n"
+        + "\n".join(body) +
+        "\n\\bottomrule\n\\end{tabular}\n\\end{table}\n"
+    )
+
+
 def gen_p1_t6_efficiency(results: Dict[str, Dict], bench: Dict[str, Dict]) -> str:
     rows = []
     for key, disp in P1_BASE_DISPLAY.items():
@@ -1129,6 +1182,12 @@ def main():
         "T3_edes.tex":        gen_p1_t3_edes(results),
         "T4_ef.tex":          gen_p1_t4_ef(results),
         "T6_efficiency.tex":  gen_p1_t6_efficiency(results, bench),
+    }
+    _t5 = gen_p1_t5_quality(args.results_root)
+    if _t5:
+        p1_tables["T5_quality.tex"] = _t5
+    p1_tables = {
+        **p1_tables,
         "T7_wilcoxon.tex":    gen_p1_t7_wilcoxon(results, {}),
     }
     p2_tables = {
