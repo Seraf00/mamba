@@ -252,6 +252,16 @@ def evaluate_model(
     metrics_ed = SegmentationMetrics(num_classes=4)
     metrics_es = SegmentationMetrics(num_classes=4)
 
+    # Native-resolution boundary accumulators. HD95/ASSD in mm must be computed
+    # at native resolution: CAMUS frames are ~630x519 with 0.308 mm spacing, so
+    # computing boundary distances on the resized 256x256 grid with the native
+    # spacing under-reports them by ~(native_dim / 256) ~ 2.2x. We upsample each
+    # prediction back to its native size and compare to the native GT.
+    metrics_native = SegmentationMetrics(num_classes=4)
+    metrics_native_ed = SegmentationMetrics(num_classes=4)
+    metrics_native_es = SegmentationMetrics(num_classes=4)
+    native_counts = {'all': 0, 'ed': 0, 'es': 0}
+
     # Collect per-sample predictions for stats + EF downstream
     all_preds: List[np.ndarray] = []
     all_targets: List[np.ndarray] = []
@@ -288,6 +298,29 @@ def evaluate_model(
                     preds[es_indices], masks[es_indices], spacing=es_spacings
                 )
 
+            # Native-resolution boundary metrics: upsample each prediction to
+            # its native image size and score against the native-resolution GT
+            # with the true NIfTI spacing.
+            native_masks = batch.get('native_mask') or [None] * len(phases)
+            for i in range(preds.shape[0]):
+                nm = native_masks[i]
+                if nm is None:
+                    continue
+                Hn, Wn = int(np.asarray(nm).shape[0]), int(np.asarray(nm).shape[1])
+                pred_nat = torch.nn.functional.interpolate(
+                    preds[i:i + 1].unsqueeze(1).float(), size=(Hn, Wn),
+                    mode='nearest').squeeze(1).long().cpu()
+                gt_nat = torch.from_numpy(np.asarray(nm)).long().unsqueeze(0)
+                sp = [spacings[i]]
+                metrics_native.update(pred_nat, gt_nat, spacing=sp)
+                native_counts['all'] += 1
+                if phases[i] == 'ED':
+                    metrics_native_ed.update(pred_nat, gt_nat, spacing=sp)
+                    native_counts['ed'] += 1
+                elif phases[i] == 'ES':
+                    metrics_native_es.update(pred_nat, gt_nat, spacing=sp)
+                    native_counts['es'] += 1
+
             all_preds.append(preds.cpu().numpy())
             all_targets.append(masks.cpu().numpy())
 
@@ -302,6 +335,21 @@ def evaluate_model(
     results_es = metrics_es.compute()
     for k, v in results_es.items():
         results[f'{k}_es'] = v
+
+    # Override boundary metrics (HD95/ASSD, mm) with the native-resolution
+    # values. Dice / IoU / EF are unaffected (overlap and volume-ratio metrics
+    # are scale-free) and keep their resized-grid values.
+    def _override_boundary(res, native_metrics, suffix, count):
+        if count <= 0:
+            return
+        for k, v in native_metrics.compute().items():
+            if k.startswith('hd95') or k.startswith('assd') or k.startswith('hd_'):
+                res[f'{k}{suffix}'] = v
+
+    _override_boundary(results, metrics_native, '', native_counts['all'])
+    _override_boundary(results, metrics_native_ed, '_ed', native_counts['ed'])
+    _override_boundary(results, metrics_native_es, '_es', native_counts['es'])
+    results['boundary_resolution'] = 'native' if native_counts['all'] > 0 else 'resized_256'
 
     # Stack predictions for per-sample stats
     all_preds_np = np.concatenate(all_preds, axis=0)
@@ -339,6 +387,7 @@ def _eval_collate_fn(batch: List[Dict]) -> Dict:
         'view': [item['view'] for item in batch],
         'phase': [item['phase'] for item in batch],
         'pixel_spacing': [tuple(item['pixel_spacing']) for item in batch],
+        'native_mask': [item.get('native_mask') for item in batch],
     }
 
 

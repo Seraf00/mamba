@@ -493,9 +493,17 @@ class CAMUSDataset(Dataset):
             image = patient.load_image(view, phase)
             mask = patient.load_segmentation(view, phase)
         
+        # Capture the native-resolution GT mask BEFORE any resize. Boundary
+        # metrics (HD95/ASSD in mm) must be computed at native resolution with
+        # the true NIfTI spacing; computing them on the resized 256x256 grid
+        # with the native spacing under-reports distances by (native_dim / 256).
+        native_mask = None
+        if self.include_info and not sample_info['is_sequence']:
+            native_mask = np.asarray(mask).astype(np.int64).copy()
+
         # Normalize image to [0, 1]
         image = (image - image.min()) / (image.max() - image.min() + 1e-8)
-        
+
         # Apply transforms
         if self.transform is not None:
             transformed = self.transform(image=image, mask=mask)
@@ -528,6 +536,7 @@ class CAMUSDataset(Dataset):
                 'ef': patient.get_ef(view) or -1.0,
                 'quality': patient.get_image_quality(view) or 'Unknown',
                 'pixel_spacing': pixel_spacing,
+                'native_mask': native_mask,
             }
             ed_vol, es_vol = patient.get_lv_volumes(view)
             output['lv_ed_volume'] = ed_vol or -1.0
