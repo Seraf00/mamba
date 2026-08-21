@@ -84,14 +84,15 @@ geometric, boundary, clinical, and efficiency metrics simultaneously.
       statistically significant, and produce a critical-difference
       diagram showing the top-tier band of equivalent models.
 
-\item Our best architecture, TransUNet, reaches Dice $= 0.9122$,
-      HD95 $= 1.82$~mm; nnU-Net reaches Dice $= 0.9099$, HD95 $= 1.93$~mm
-      with $6\times$ fewer parameters and roughly $3\times$ faster
-      inference. The HD95 of approximately $1.9$~mm represents a
-      substantial improvement over the originally published nnU-Net
-      baseline ($\approx 4.3$~mm) \citep{leclerc2019} and demonstrates
-      the importance of training-protocol modernisation for fair
-      cross-architecture comparison.
+\item Our best architecture, TransUNet, reaches Dice $= 0.9121$,
+      HD95 $= 4.08$~mm; nnU-Net reaches Dice $= 0.9099$, HD95 $= 4.27$~mm
+      with $6.5\times$ fewer parameters and roughly $3\times$ faster
+      inference. Boundary accuracy under our unified protocol reproduces
+      the originally published nnU-Net baseline
+      ($\approx 4.3$~mm) \citep{leclerc2019} rather than improving on it,
+      whereas EF error falls from $\sim$$9\%$ to $5.52\%$: protocol
+      modernisation shows up in clinical agreement, not in contour
+      precision.
 
 \item We release a fully reproducible benchmark framework: training,
       evaluation, statistical analysis, and figure generation code.

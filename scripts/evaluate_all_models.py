@@ -794,14 +794,6 @@ def main():
     
     stat_results = statistical_comparison(all_results)
     
-    significant_pairs = [(k, v) for k, v in stat_results.items() if v.get('significant')]
-    if significant_pairs:
-        print(f"\nSignificant differences found (p < 0.05, Bonferroni corrected):")
-        for pair, res in significant_pairs:
-            print(f"  {pair}: p={res['p_corrected']:.4f}, Δ={res['mean_diff']:.4f}")
-    else:
-        print("\nNo statistically significant differences found.")
-    
     # Save all results
     output = {
         'evaluation_date': datetime.now().isoformat(),
@@ -810,6 +802,19 @@ def main():
         'statistical_comparison': stat_results
     }
     
+    # Re-create the output directory immediately before writing. It is made
+    # once at startup, but an evaluation run is long (hours) and the directory
+    # can disappear underneath us -- a VMamba run lost all nine models this way,
+    # failing on the final write after the compute was already done. Losing a
+    # finished run to a missing directory is not acceptable, so we also fall
+    # back to the current working directory rather than raising.
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as mk_err:
+        print(f"WARNING: could not create {output_dir} ({mk_err}); "
+              f"falling back to CWD")
+        output_dir = Path('.')
+
     with open(output_dir / 'evaluation_results.json', 'w') as f:
         # Convert numpy arrays/scalars to native Python types so json.dump works.
         # numpy.bool_, numpy.int64, numpy.float32 etc. are NOT JSON-serializable
@@ -837,7 +842,24 @@ def main():
                 return obj
             return obj
         json.dump(convert(output), f, indent=2)
-    
+
+    # Report the significance summary only AFTER the JSON is on disk. Printing
+    # is the single most failure-prone step in this script (console encoding),
+    # and an exception here used to discard a complete multi-hour evaluation.
+    significant_pairs = [(k, v) for k, v in stat_results.items()
+                         if v.get('significant')]
+    try:
+        if significant_pairs:
+            print("\nSignificant differences found "
+                  "(p < 0.05, Bonferroni corrected):")
+            for pair, res in significant_pairs:
+                print(f"  {pair}: p={res['p_corrected']:.4f}, "
+                      f"mean_diff={res['mean_diff']:.4f}")
+        else:
+            print("\nNo statistically significant differences found.")
+    except Exception as print_err:  # never lose a finished run to stdout
+        print(f"(significance summary could not be printed: {print_err})")
+
     # Create LaTeX table
     create_latex_table(all_results, output_dir / 'results_table.tex')
     

@@ -12,22 +12,23 @@ ED- and ES-stratified accuracy, image-quality-stratified robustness,
 parameter / FLOPs / latency efficiency, and Bonferroni-corrected
 pairwise statistical significance.
 
-The hybrid TransUNet leads on bulk Dice ($0.9122$) and HD95
-($1.82$~mm). The pure-CNN nnU-Net leads on EF accuracy
-(MAE $6.10\%$, $r = 0.787$) and is $6.5\times$ more parameter-efficient.
+The hybrid TransUNet leads on bulk Dice ($0.9121$) and HD95
+($4.08$~mm). The pure-CNN nnU-Net leads on EF accuracy
+(MAE $5.52\%$, $r = 0.828$) and is $6.5\times$ more parameter-efficient.
 The top four architectures (TransUNet, nnU-Net, UNet-ResNet, UNet-V1)
 form a statistically equivalent top-tier band. The pure-Transformer
 Swin-UNet is mid-tier on bulk Dice but degraded on EF, suggesting that
 its contours are subtly biased in a manner that compounds through
 Simpson's biplane integration.
 
-The full-network HD95 of approximately $1.9$~mm represents a substantial
-improvement over the originally reported CAMUS nnU-Net baseline of
-$4.3$~mm (reported under a different boundary-metric convention, so the
-comparison is indicative). We attribute most of this improvement to training-protocol
-modernisation (cosine annealing, mixed precision, boundary loss) rather
-than to architectural changes. This observation is useful as a baseline
-calibration point for cross-paper comparison of CAMUS results.
+Boundary accuracy under the unified protocol ($4.08$--$4.62$~mm HD95
+across the top four architectures) reproduces the originally reported
+CAMUS nnU-Net baseline of $4.3$~mm rather than improving on it, while EF
+error falls from the $\sim$$9\%$ originally reported to $5.52\%$. We read
+this as a useful calibration point for cross-paper comparison: on CAMUS,
+a decade of protocol modernisation is visible in the downstream clinical
+quantity but not in the contour itself, which appears to be approaching
+the ceiling set by annotation variability.
 
 Three directions remain open. (i) Cross-dataset transfer to
 EchoNet-Dynamic and ACDC would test whether the architectural ranking

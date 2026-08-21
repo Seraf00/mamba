@@ -923,7 +923,12 @@ def gen_p2_t7_param_matched(results: Dict[str, Dict],
         "\\caption{Parameter-matched comparison. The base and widened rows are\n"
         "trained in the same dedicated session so their comparison is within-session;\n"
         "the Mamba row is from the main session. Swin-UNet and TransUNet are excluded\n"
-        "as their capacity is tied to fixed pretrained encoders.}\n"
+        "as their capacity is tied to fixed pretrained encoders. Entries shown\n"
+        "as --- could not be evaluated under the native-resolution boundary\n"
+        "protocol because the corresponding checkpoint is no longer available;\n"
+        "a pair whose widened control is missing does not support a conclusion\n"
+        "about the value of the SSM block, and is reported only for\n"
+        "completeness.}\n"
         "\\label{tab:parammatch}\n"
         "\\small\n"
         "\\setlength{\\tabcolsep}{4pt}\n"
@@ -1088,6 +1093,13 @@ def gen_canonical_anchors(results: Dict[str, Dict]) -> List[Tuple[str, str]]:
     add("nnunet", "ef_correlation", ".3f", "nnU-Net EF r", sub="ef_metrics")
     add("transunet", "dice_mean", ".4f", "TransUNet Dice")
     add("nnunet", "dice_mean", ".4f", "nnU-Net Dice")
+    # Boundary anchors. These exist because the HD95/ASSD values were once
+    # computed on the resized 256x256 grid with the native NIfTI spacing,
+    # under-reporting every distance by ~2.2x; the tables were regenerated but
+    # the prose kept the old sub-2 mm numbers. Anchoring HD95 makes any future
+    # table/prose divergence on the boundary axis fail the build.
+    add("transunet", "hd95_mean", ".2f", "TransUNet HD95")
+    add("nnunet", "hd95_mean", ".2f", "nnU-Net HD95")
     return anchors
 
 

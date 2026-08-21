@@ -35,11 +35,17 @@ generic semantic-segmentation prowess.
 
 The original CAMUS paper \citep{leclerc2019} reported nnU-Net HD95
 $\approx 4.3$~mm and EF MAE $\sim$$9\%$. Our reproduced nnU-Net under the
-unified protocol reaches HD95 $1.93$~mm and EF MAE $6.10\%$ --- roughly
-twice as accurate on the boundary axis and substantially better on EF.
+unified protocol reaches HD95 $4.27$~mm and EF MAE $5.52\%$. The two axes
+therefore behave very differently: boundary accuracy is statistically
+indistinguishable from the 2019 result, while EF error falls by roughly
+$40\%$.
 
-This gap is \emph{not} an architectural improvement: nnU-Net's
-architecture is unchanged. The improvement is attributable to three
+We read this as evidence that the contour itself is close to the ceiling
+imposed by annotation quality on CAMUS --- inter-observer variability on
+this dataset is of the same order as the differences we measure between
+architectures --- whereas the downstream clinical quantity still has room
+to improve. Where EF does improve, it is \emph{not} an architectural
+effect: nnU-Net's architecture is unchanged. It is attributable to three
 training-protocol upgrades made standard since 2019:
 \begin{enumerate}[leftmargin=*,nosep]
 \item Cosine-with-warm-restarts learning-rate schedule with
@@ -78,9 +84,11 @@ correlate with strong performance:
       efficient, appears to limit high-resolution boundary precision on
       CAMUS.
 \item \textbf{Boundary-aware loss} (used uniformly in our protocol).
-      This is a protocol choice rather than an architecture choice, but
-      it appears to be among the largest single contributors to the
-      HD95 improvement over published CAMUS baselines.
+      This is a protocol choice rather than an architecture choice. Since
+      our HD95 matches rather than beats the published baseline, we make
+      no claim that it improves absolute boundary accuracy; its role here
+      is to hold the boundary objective constant across all nine
+      architectures so that the comparison is like-for-like.
 \item \textbf{Auto-configuration} (nnU-Net's distinguishing feature).
       The nnU-Net framework produces a competitive model on this dataset
       with $\sim$$15$~M parameters --- substantially smaller than any

@@ -20,21 +20,22 @@ parameter count for each architecture on the official CAMUS test split.
 \input{tables/T1_main_dice}
 
 \paragraph{Headline ranking.}
-\textbf{TransUNet} achieves the highest mean Dice ($0.9122$), narrowly
-ahead of \textbf{nnU-Net} ($0.9099$, $\Delta = 0.0023$), \textbf{UNet-ResNet}
-($0.9087$), and \textbf{UNet-V1} ($0.9085$). The four top architectures
+\textbf{TransUNet} achieves the highest mean Dice ($0.9121$), narrowly
+ahead of \textbf{nnU-Net} ($0.9099$, $\Delta = 0.0022$), \textbf{UNet-V1}
+($0.9085$), and \textbf{UNet-ResNet} ($0.9081$). The four top architectures
 are tightly clustered within $\Delta\text{Dice} \le 0.004$ ---
 within the Bonferroni-corrected statistical-significance band
-(Section~\ref{sec:results-significance}). Below this band,
+(Section~\ref{sec:results-significance}), so their ordering should not be
+read as a ranking. Below this band,
 \textbf{UNet-V2} ($0.8963$) and \textbf{Swin-UNet} ($0.8882$) form a
-mid-tier, and \textbf{FPN-UNet} ($0.8619$), \textbf{DeepLabV3+}
-($0.8570$), and \textbf{DenseContextU-Net} ($0.8505$) trail.
+mid-tier, and \textbf{DeepLabV3+} ($0.8602$), \textbf{FPN-UNet}
+($0.8596$), and \textbf{DenseContextU-Net} ($0.8505$) trail.
 
 \paragraph{Per-class.}
-LV-endo Dice ranges $0.8977$ (DenseContextU-Net) to $0.9370$ (nnU-Net);
-LA Dice ranges $0.8477$ (DeepLabV3+) to $0.9213$ (TransUNet);
+LV-endo Dice ranges $0.8962$ (FPN-UNet) to $0.9371$ (nnU-Net);
+LA Dice ranges $0.8492$ (DenseContextU-Net) to $0.9208$ (TransUNet);
 LV-epi is consistently the hardest class for every architecture (mean
-across models: $\Dice \approx 0.84$).
+across models: $\Dice \approx 0.85$, versus $\approx 0.92$ for LV-endo).
 
 %------------------------------------------------------------------------------
 \subsection{Boundary accuracy (HD95 and ASSD in mm)}
@@ -46,23 +47,30 @@ pixel spacing.
 \input{tables/T2_boundary}
 
 \paragraph{HD95.}
-TransUNet again leads with HD95 $= 1.82$~mm, followed by UNet-ResNet and
-nnU-Net (both $1.93$~mm), UNet-V1 ($2.13$~mm), Swin-UNet ($2.01$~mm), and
-UNet-V2 ($2.33$~mm). The published CAMUS nnU-Net baseline of
-$\approx 4.3$~mm \citep{leclerc2019} is improved on by every architecture
-in this benchmark by a factor of $\sim$$2$. That figure was reported under
-the original CAMUS evaluation convention, which differs from our
-per-sample HD95; the cross-paper comparison is therefore indicative of
-protocol-level progress rather than a strictly like-for-like gain. We
-attribute most of this gap
-to training-protocol modernisation (cosine annealing, mixed precision,
-boundary loss) rather than to architectural changes
-(Section~\ref{sec:discussion}).
+TransUNet again leads with HD95 $= 4.08$~mm, followed by UNet-ResNet
+($4.26$~mm) and nnU-Net ($4.27$~mm), UNet-V1 ($4.62$~mm), Swin-UNet
+($5.08$~mm), and UNet-V2 ($5.29$~mm). All boundary distances are computed
+at the native image resolution: CAMUS frames are approximately
+$630 \times 519$ with a typical spacing of $0.308$~mm, so each prediction
+is resampled back to its native grid before the distance transform is
+taken. Measuring on the $256 \times 256$ network grid while applying the
+native spacing would under-report every distance by the resampling factor
+of $\sim$$2.2$, and we caution that this is an easy error to make silently.
+The top four architectures sit within $0.2$~mm of one another --- a spread
+well inside the training-variance floor discussed in
+Section~\ref{sec:discussion} --- and cluster around the published CAMUS
+nnU-Net baseline of $\approx 4.3$~mm \citep{leclerc2019}. Under a unified
+modern protocol, then, boundary accuracy on CAMUS appears to have
+saturated: our reproduction matches the 2019 baseline rather than
+improving on it. That baseline was in any case reported under the original
+CAMUS evaluation convention, which differs from our per-sample HD95, so
+the cross-paper comparison is indicative rather than strictly
+like-for-like.
 
 \paragraph{ED versus ES.}
 Table~\ref{tab:edes} reports ED- and ES-stratified mean Dice and HD95. The
 two phases are closely matched for every architecture (mean Dice within
-$\approx 0.003$ and HD95 within $\approx 0.1$~mm), with no consistent
+$\approx 0.007$ and HD95 within $\approx 1.4$~mm), with no consistent
 advantage to either phase --- a reassuring property for biplane EF, which
 depends on both phases symmetrically.
 
@@ -77,16 +85,17 @@ Table~\ref{tab:ef} reports biplane Simpson's EF error per architecture.
 \input{tables/T4_ef}
 
 \paragraph{Best EF agreement.}
-\textbf{nnU-Net} produces the most accurate EF estimates (MAE $= 6.10\%$,
-$r = 0.787$, Bland--Altman bias $-0.30\%$, 95\% limits of agreement
-$[-17.4, +16.8]\%$). The near-zero mean bias is comparable to reported
+\textbf{nnU-Net} produces the most accurate EF estimates (MAE $= 5.52\%$,
+$r = 0.828$, Bland--Altman bias $+0.84\%$, 95\% limits of agreement
+$[-14.2, +15.9]\%$ --- the narrowest of any architecture tested). The near-zero mean bias is comparable to reported
 echocardiographer inter-observer LVEF error ($\sim$$7$--$10\%$), but the
 wide limits of agreement show that per-patient agreement remains looser
 than the mean error alone suggests; we therefore read this as a
 mask-derived, like-for-like comparison rather than a claim of clinical
-parity. UNet-V1
-(MAE $= 6.78\%$, $r = 0.793$) follows, with TransUNet attaining the
-highest EF correlation ($r = 0.824$). The Transformer-only Swin-UNet shows
+parity. UNet-V1 and UNet-ResNet
+(both MAE $= 6.78\%$) follow, with UNet-ResNet attaining the
+highest EF correlation ($r = 0.832$, marginally ahead of nnU-Net's
+$0.828$). The Transformer-only Swin-UNet shows
 degraded EF performance (MAE $= 10.46\%$, $r = 0.574$) despite competitive
 bulk Dice, suggesting it produces accurate \emph{but} biased contours
 (consistent with its Bland--Altman bias of $-4.10\%$).
@@ -120,8 +129,8 @@ single-image inference latency, and peak GPU memory.
 
 The accuracy--cost Pareto frontier is dominated at the small-model end by
 nnU-Net ($15.6$~M parameters, Dice $0.9099$, $2.4$~ms latency) and at the
-high-accuracy end by TransUNet ($102.1$~M parameters, Dice $0.9122$,
-$7.9$~ms). The marginal gain of TransUNet over nnU-Net ($+0.0023$ Dice ---
+high-accuracy end by TransUNet ($102.1$~M parameters, Dice $0.9121$,
+$7.9$~ms). The marginal gain of TransUNet over nnU-Net ($+0.0022$ Dice ---
 within training variance, Section~\ref{sec:results-significance}) costs
 $6.5\times$ the parameters and $\approx 3.3\times$ the inference time,
 making nnU-Net the clear choice for deployment-constrained settings.

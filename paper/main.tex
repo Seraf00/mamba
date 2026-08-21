@@ -92,14 +92,16 @@ and end-systolic stratified metrics, robustness across image-quality
 grades, efficiency (parameters, FLOPs, latency, memory), and
 Bonferroni-corrected Wilcoxon significance tests.
 %
-The best base architecture, TransUNet, reaches Dice $= 0.9122$,
-HD95 $= 1.82$~mm, and EF MAE $= 7.30\%$ on the official CAMUS test set.
-nnU-Net follows at Dice $= 0.9099$, HD95 $= 1.93$~mm, EF MAE $= 6.10\%$
-($r = 0.79$). The full-network HD95 of approximately $1.9$~mm represents
-a substantial improvement over the published nnU-Net baseline of
-$4.3$~mm \citep{leclerc2019}, attributable to training-protocol
-modernisation (cosine annealing, mixed precision, boundary loss) rather
-than to architectural changes.
+The best base architecture, TransUNet, reaches Dice $= 0.9121$,
+HD95 $= 4.08$~mm, and EF MAE $= 7.64\%$ on the official CAMUS test set.
+nnU-Net follows at Dice $= 0.9099$, HD95 $= 4.27$~mm, and attains the best
+clinical agreement of any architecture tested, EF MAE $= 5.52\%$
+($r = 0.828$), with $6.5\times$ fewer parameters. Boundary accuracy is
+therefore on a par with the published nnU-Net CAMUS baseline
+($\approx 4.3$~mm) \citep{leclerc2019}, while EF error is reduced by
+roughly $40\%$ relative to the $\sim$$9\%$ originally reported --- that
+is, protocol modernisation buys clinical agreement rather than contour
+precision.
 %
 The benchmark also yields findings that single-architecture papers do not
 report: the LV-epicardium is the hardest of the three foreground
@@ -143,8 +145,9 @@ intermediate JSON / CSV outputs supporting this paper are released at
 
 \section*{Acknowledgements}
 The authors thank the CAMUS challenge organisers (CREATIS, INSA Lyon) for
-making the dataset publicly available. All model training and evaluation
-were performed on Google Colab Pro (NVIDIA L4 and A100 GPUs).
+making the dataset publicly available. Model training was performed on
+Google Colab Pro (NVIDIA L4 and A100 GPUs); the final test-set evaluation
+reported here was run on a single NVIDIA RTX 4060 Laptop GPU.
 \TODO{Add funding sources / grant numbers if any, and acknowledge any
 clinical collaborator who verified the ejection-fraction pipeline; delete
 this note if not applicable.}

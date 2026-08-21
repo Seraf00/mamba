@@ -83,8 +83,11 @@ All nine architectures share a single training protocol:
       (Swin-UNet, TransUNet) to prevent the early-epoch divergence we
       otherwise observed.
 \item Early stopping with patience $20$ on validation mean Dice.
-\item Hardware: Google Colab Pro NVIDIA L4 (24~GB) and A100 (40~GB)
-      instances.
+\item Training hardware: Google Colab Pro NVIDIA L4 (24~GB) and A100
+      (40~GB) instances. The final test-set evaluation reported in
+      Section~ef{sec:results} was run in a single pass on one NVIDIA
+      RTX 4060 Laptop GPU, so that every metric in every table comes from
+      the same inference run.
 \end{itemize}
 
 All nine architectures were trained with a \emph{uniform} batch size of
