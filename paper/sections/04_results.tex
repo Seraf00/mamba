@@ -56,9 +56,11 @@ is resampled back to its native grid before the distance transform is
 taken. Measuring on the $256 \times 256$ network grid while applying the
 native spacing would under-report every distance by the resampling factor
 of $\sim$$2.2$, and we caution that this is an easy error to make silently.
-The top four architectures sit within $0.2$~mm of one another, a spread
-well inside the training-variance floor discussed in
-Section~\ref{sec:discussion}, and cluster around the published CAMUS
+The three best architectures sit within $0.2$~mm of one another
+(TransUNet $4.08$, UNet-ResNet $4.26$, nnU-Net $4.27$), and the top four
+within $0.54$~mm --- a spread well inside the training-variance floor
+discussed in Section~\ref{sec:discussion}. All of them cluster around the
+published CAMUS
 nnU-Net baseline of $\approx 4.3$~mm \citep{leclerc2019}. Under a unified
 modern protocol, then, boundary accuracy on CAMUS appears to have
 saturated: our reproduction matches the 2019 baseline rather than
