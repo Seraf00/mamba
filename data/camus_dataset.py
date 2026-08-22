@@ -289,6 +289,7 @@ class CAMUSDataset(Dataset):
         phases: List[str] = ['ED', 'ES'],
         transform=None,
         include_info: bool = False,
+        include_native_mask: bool = False,
         patient_ids: Optional[List[str]] = None,
         quality_filter: Optional[List[str]] = None,
         include_sequences: bool = False
@@ -303,6 +304,13 @@ class CAMUSDataset(Dataset):
             phases: List of phases to include ('ED', 'ES')
             transform: Albumentations transform
             include_info: Whether to include patient info in output
+            include_native_mask: Whether to also return the pre-resize
+                ground-truth mask under 'native_mask'. Off by default: the
+                native masks vary in size between patients, so a batch of
+                them cannot be stacked by PyTorch's default collate. Enable
+                it only alongside a collate function that keeps them as a
+                list (see scripts/evaluate_all_models.py), which is what the
+                native-resolution HD95/ASSD computation needs.
             patient_ids: Specific patient IDs to include (optional)
             quality_filter: Only include images with these quality grades
             include_sequences: Include all frames from half sequences (significantly more data)
@@ -313,6 +321,7 @@ class CAMUSDataset(Dataset):
         self.phases = phases
         self.transform = transform
         self.include_info = include_info
+        self.include_native_mask = include_native_mask
         self.quality_filter = quality_filter
         self.include_sequences = include_sequences
         
@@ -498,7 +507,7 @@ class CAMUSDataset(Dataset):
         # the true NIfTI spacing; computing them on the resized 256x256 grid
         # with the native spacing under-reports distances by (native_dim / 256).
         native_mask = None
-        if self.include_info and not sample_info['is_sequence']:
+        if self.include_native_mask and not sample_info['is_sequence']:
             native_mask = np.asarray(mask).astype(np.int64).copy()
 
         # Normalize image to [0, 1]
@@ -536,8 +545,13 @@ class CAMUSDataset(Dataset):
                 'ef': patient.get_ef(view) or -1.0,
                 'quality': patient.get_image_quality(view) or 'Unknown',
                 'pixel_spacing': pixel_spacing,
-                'native_mask': native_mask,
             }
+            # Only present when explicitly requested. Emitting the key with a
+            # None value breaks PyTorch's default collate ("batch must contain
+            # tensors ... found NoneType"), which would make every consumer of
+            # get_dataloaders() fail even though it never asked for it.
+            if native_mask is not None:
+                output['native_mask'] = native_mask
             ed_vol, es_vol = patient.get_lv_volumes(view)
             output['lv_ed_volume'] = ed_vol or -1.0
             output['lv_es_volume'] = es_vol or -1.0

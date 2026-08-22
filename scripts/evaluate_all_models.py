@@ -699,6 +699,10 @@ def main():
             split=args.split,
             transform=transform,
             include_info=True,
+            # Required for the native-resolution boundary metrics below; safe
+            # here because _eval_collate_fn keeps the variable-sized native
+            # masks as a list rather than stacking them.
+            include_native_mask=True,
         )
 
         dataloader = DataLoader(

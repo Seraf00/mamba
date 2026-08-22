@@ -23,13 +23,17 @@ def get_dataloaders(
     phases: List[str] = ['ED', 'ES'],
     num_workers: int = 4,
     pin_memory: bool = True,
-    seed: int = 42
+    seed: int = 42,
+    include_info: bool = True
 ) -> Dict[str, DataLoader]:
     """
     Create train, validation, and test dataloaders.
     
     Args:
         root_dir: Path to CAMUS dataset
+        include_info: If True (default) each item is a metadata dict; set
+            False to get plain ``(image, mask)`` tuples, which is what the
+            standard training loops in ``training/trainer.py`` expect.
         batch_size: Batch size
         img_size: Image size (H, W)
         train_split: Fraction for training
@@ -84,7 +88,7 @@ def get_dataloaders(
         phases=phases,
         transform=train_transform,
         patient_ids=train_patients,
-        include_info=True
+        include_info=include_info
     )
     
     val_dataset = CAMUSDataset(
@@ -94,7 +98,7 @@ def get_dataloaders(
         phases=phases,
         transform=val_transform,
         patient_ids=val_patients,
-        include_info=True
+        include_info=include_info
     )
     
     test_dataset = CAMUSDataset(
@@ -104,7 +108,7 @@ def get_dataloaders(
         phases=phases,
         transform=val_transform,
         patient_ids=test_patients,
-        include_info=True
+        include_info=include_info
     )
     
     # Create dataloaders
