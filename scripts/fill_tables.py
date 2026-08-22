@@ -906,6 +906,14 @@ def gen_p2_t7_param_matched(results: Dict[str, Dict],
             hd = _get(r, "hd95_mean")
             mae = (r.get("ef_metrics") or {}).get("ef_mae")
             disp = lbl if k.endswith("_wide") or "(base" in lbl or "(closest" in lbl else _texttt(k)
+            # A row carrying ``_retrained`` was NOT produced in the original
+            # param-matched session, so its comparison against the base row in
+            # the same block is cross-session. Training variance across sessions
+            # is worth several Dice points (see load_all_results), which is the
+            # same magnitude as the effect this table measures -- so the row is
+            # marked and the caption says what the mark means.
+            if r.get("_retrained"):
+                disp = disp + "$^{\\dag}$"
             body.append(
                 f"{disp:<60} & {params:>5.1f} & {_fmt(d,'.4f')} & {_fmt(hd,'.2f')} & {_fmt(mae,'.2f')} \\\\"
             )
@@ -913,6 +921,26 @@ def gen_p2_t7_param_matched(results: Dict[str, Dict],
 
     if body and body[-1] == "\\midrule":
         body = body[:-1]
+
+    # Explain only the notations the table actually uses, so the caption never
+    # describes a situation that no longer exists.
+    joined_body = "\n".join(body)
+    missing_note = (
+        " Entries shown as --- could not be evaluated under the"
+        " native-resolution boundary protocol because the corresponding"
+        " checkpoint is no longer available; a pair whose widened control is"
+        " missing does not support a conclusion about the value of the SSM"
+        " block, and is reported only for completeness."
+        if "{---}" in joined_body else ""
+    )
+    retrain_note = (
+        " $^{\\dag}$Retrained separately from the original param-matched"
+        " session under the same recipe and seed after the original"
+        " checkpoint was lost; the reproduction agrees with the original"
+        " session to $0.0003$ Dice, but the comparison with its base row is"
+        " nonetheless cross-session."
+        if "\\dag" in joined_body else ""
+    )
 
     return (
         "%==============================================================================\n"
@@ -923,12 +951,8 @@ def gen_p2_t7_param_matched(results: Dict[str, Dict],
         "\\caption{Parameter-matched comparison. The base and widened rows are\n"
         "trained in the same dedicated session so their comparison is within-session;\n"
         "the Mamba row is from the main session. Swin-UNet and TransUNet are excluded\n"
-        "as their capacity is tied to fixed pretrained encoders. Entries shown\n"
-        "as --- could not be evaluated under the native-resolution boundary\n"
-        "protocol because the corresponding checkpoint is no longer available;\n"
-        "a pair whose widened control is missing does not support a conclusion\n"
-        "about the value of the SSM block, and is reported only for\n"
-        "completeness.}\n"
+        "as their capacity is tied to fixed pretrained encoders."
+        f"{missing_note}{retrain_note}}}\n"
         "\\label{tab:parammatch}\n"
         "\\small\n"
         "\\setlength{\\tabcolsep}{4pt}\n"
