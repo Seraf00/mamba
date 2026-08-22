@@ -56,9 +56,9 @@ is resampled back to its native grid before the distance transform is
 taken. Measuring on the $256 \times 256$ network grid while applying the
 native spacing would under-report every distance by the resampling factor
 of $\sim$$2.2$, and we caution that this is an easy error to make silently.
-The top four architectures sit within $0.2$~mm of one another --- a spread
+The top four architectures sit within $0.2$~mm of one another, a spread
 well inside the training-variance floor discussed in
-Section~\ref{sec:discussion} --- and cluster around the published CAMUS
+Section~\ref{sec:discussion}, and cluster around the published CAMUS
 nnU-Net baseline of $\approx 4.3$~mm \citep{leclerc2019}. Under a unified
 modern protocol, then, boundary accuracy on CAMUS appears to have
 saturated: our reproduction matches the 2019 baseline rather than
@@ -71,7 +71,7 @@ like-for-like.
 Table~\ref{tab:edes} reports ED- and ES-stratified mean Dice and HD95. The
 two phases are closely matched for every architecture (mean Dice within
 $\approx 0.007$ and HD95 within $\approx 1.4$~mm), with no consistent
-advantage to either phase --- a reassuring property for biplane EF, which
+advantage to either phase. This is a reassuring property for biplane EF, which
 depends on both phases symmetrically.
 
 \input{tables/T3_edes}
@@ -87,7 +87,7 @@ Table~\ref{tab:ef} reports biplane Simpson's EF error per architecture.
 \paragraph{Best EF agreement.}
 \textbf{nnU-Net} produces the most accurate EF estimates (MAE $= 5.52\%$,
 $r = 0.828$, Bland--Altman bias $+0.84\%$, 95\% limits of agreement
-$[-14.2, +15.9]\%$ --- the narrowest of any architecture tested). The near-zero mean bias is comparable to reported
+$[-14.2, +15.9]\%$, the narrowest of any architecture tested). The near-zero mean bias is comparable to reported
 echocardiographer inter-observer LVEF error ($\sim$$7$--$10\%$), but the
 wide limits of agreement show that per-patient agreement remains looser
 than the mean error alone suggests; we therefore read this as a
@@ -95,7 +95,9 @@ mask-derived, like-for-like comparison rather than a claim of clinical
 parity. UNet-V1 and UNet-ResNet
 (both MAE $= 6.78\%$) follow, with UNet-ResNet attaining the
 highest EF correlation ($r = 0.832$, marginally ahead of nnU-Net's
-$0.828$). The Transformer-only Swin-UNet shows
+$0.828$). Notably, the best-Dice architecture is not the best on the
+clinical axis: TransUNet reaches only MAE $= 7.64\%$ ($r = 0.799$),
+behind three CNNs that score lower on bulk overlap. The Transformer-only Swin-UNet shows
 degraded EF performance (MAE $= 10.46\%$, $r = 0.574$) despite competitive
 bulk Dice, suggesting it produces accurate \emph{but} biased contours
 (consistent with its Bland--Altman bias of $-4.10\%$).
@@ -179,14 +181,14 @@ comparable or larger amount (in the most extreme case, DeepLabV3+ varied by
 $0.057$ between two runs). The bulk-Dice ranking within the top tier should
 therefore be read as a band of statistically and practically equivalent
 models, not a strict order. The architecturally meaningful differences in
-this benchmark are the larger-magnitude ones --- the boundary accuracy
-(HD95), the clinical EF agreement, and the efficiency trade-off ---
+this benchmark are the larger-magnitude ones: the boundary accuracy
+(HD95), the clinical EF agreement, and the efficiency trade-off,
 discussed in Section~\ref{sec:discussion}.
 
 The critical-difference diagram of Figure~\ref{fig:cd} renders the
 banding visually: architectures joined by a horizontal bar are not
 significantly different in average per-sample rank. Average rank need
-not track mean Dice --- TransUNet attains the best mean Dice yet only a
+not track mean Dice. TransUNet attains the best mean Dice yet only a
 middling average rank ($4.09$, sixth of nine), because it wins many
 samples by small margins while occasionally losing by larger ones. It
 nonetheless falls inside the same top clique as the leading CNNs, which

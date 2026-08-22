@@ -38,7 +38,7 @@
 % Bibliography style: MedIA uses Harvard (author-year)
 \bibliographystyle{elsarticle-harv}
 
-\journal{Medical Image Analysis}
+\journal{Computers in Biology and Medicine}
 
 %==============================================================================
 \begin{document}
@@ -71,47 +71,39 @@
 %
 Two-dimensional echocardiography is the most widely used cardiac imaging
 modality, but quantitative analysis is hampered by speckle noise, low
-boundary contrast, and inter-observer variability. Deep learning has
-matured into a competitive solution for this problem, with U-Net
-descendants, attention-augmented CNNs, hybrid CNN--Transformer designs,
-and pure Transformer networks all reporting strong results. Direct
-comparison across these paradigms, however, has been hampered by
-inconsistent training protocols, evaluation pipelines, and reporting
-conventions in the published literature.
+boundary contrast, and inter-observer variability. U-Net descendants,
+attention-augmented CNNs, hybrid CNN--Transformer designs, and pure
+Transformer networks all report strong results on this task, yet direct
+comparison between them is confounded by inconsistent training protocols
+and evaluation pipelines.
 %
-We provide the first unified, like-for-like benchmark of nine
-representative segmentation architectures spanning three paradigms ---
-pure CNN, hybrid CNN--Transformer,
-and pure Transformer --- on the CAMUS 2D echocardiographic
-segmentation dataset \citep{leclerc2019}. All models share an identical
-training protocol, data split, and evaluation pipeline, and are reported
-on a multi-dimensional set of metrics: per-class Dice and IoU,
-Hausdorff distance at 95\% (HD95) in millimetres with per-sample pixel
-spacing, biplane Simpson's ejection fraction (EF) error, end-diastolic
-and end-systolic stratified metrics, robustness across image-quality
-grades, efficiency (parameters, FLOPs, latency, memory), and
-Bonferroni-corrected Wilcoxon significance tests.
+We benchmark nine representative architectures spanning three paradigms
+under one training protocol, one data split, and one evaluation pipeline
+on the CAMUS dataset, reporting per-class Dice and IoU, boundary distances
+in millimetres, biplane Simpson's ejection fraction (EF) error,
+phase-stratified and image-quality-stratified results, efficiency, and
+Bonferroni-corrected Wilcoxon tests.
 %
-The best base architecture, TransUNet, reaches Dice $= 0.9121$,
-HD95 $= 4.08$~mm, and EF MAE $= 7.64\%$ on the official CAMUS test set.
-nnU-Net follows at Dice $= 0.9099$, HD95 $= 4.27$~mm, and attains the best
-clinical agreement of any architecture tested, EF MAE $= 5.52\%$
-($r = 0.828$), with $6.5\times$ fewer parameters. Boundary accuracy is
-therefore on a par with the published nnU-Net CAMUS baseline
-($\approx 4.3$~mm) \citep{leclerc2019}, while EF error is reduced by
-roughly $40\%$ relative to the $\sim$$9\%$ originally reported --- that
-is, protocol modernisation buys clinical agreement rather than contour
+Two findings stand out. First, boundary accuracy has saturated: the best
+architecture reaches HD95 $= 4.08$~mm against a published CAMUS baseline
+of $\approx 4.3$~mm, and the top four architectures lie within $0.2$~mm of
+one another, well inside training variance. Clinical agreement, by
+contrast, improves substantially --- nnU-Net attains EF MAE $= 5.52\%$
+($r = 0.828$) against the $\sim$$9\%$ originally reported, using
+$6.5\times$ fewer parameters than the best-Dice model. Protocol
+modernisation therefore buys clinical agreement rather than contour
 precision.
 %
-The benchmark also yields findings that single-architecture papers do not
-report: the LV-epicardium is the hardest of the three foreground
-classes across every architectural family (mean Dice $\approx 0.84$ versus
-$\approx 0.93$ for the LV-endocardium), and the
-parameter-versus-accuracy Pareto frontier is dominated by nnU-Net at the
-efficient end and TransUNet at the high-accuracy end.
+Second, we identify a reporting error that makes cross-paper boundary
+comparison unreliable. Computing Hausdorff distances on the network's
+resized grid while applying the native image spacing under-reports every
+distance by the resampling factor --- on CAMUS, $\approx 2.2\times$. Under
+that convention our own models score below $2$~mm, which would appear to
+halve the published baseline; scored at native resolution the same
+predictions merely match it. Any sub-$2$~mm HD95 reported on CAMUS
+warrants checking against this failure mode.
 %
-All training, evaluation, and analysis code, as well as model
-checkpoints, are publicly released.
+Code, checkpoints, and per-patient predictions are publicly released.
 %
 \end{abstract}
 
@@ -151,6 +143,16 @@ reported here was run on a single NVIDIA RTX 4060 Laptop GPU.
 \TODO{Add funding sources / grant numbers if any, and acknowledge any
 clinical collaborator who verified the ejection-fraction pipeline; delete
 this note if not applicable.}
+
+\section*{Declaration of Generative AI and AI-assisted technologies in the
+writing process}
+During the preparation of this work the authors used a large language model
+to assist with drafting and copy-editing of the manuscript text, and with
+implementation and refactoring of the released analysis code. After using
+this tool, the authors reviewed and edited the content as needed and take
+full responsibility for the content of the published article. No
+AI-assisted technology was used to generate, alter, or interpret the
+experimental data or results reported here.
 
 %==============================================================================
 % Bibliography

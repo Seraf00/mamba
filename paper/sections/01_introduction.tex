@@ -84,6 +84,20 @@ geometric, boundary, clinical, and efficiency metrics simultaneously.
       statistically significant, and produce a critical-difference
       diagram showing the top-tier band of equivalent models.
 
+\item \textbf{We document a boundary-metric reporting error that makes
+      published HD95 values on CAMUS mutually incomparable.} Computing
+      the distance transform on the network's resized $256 \times 256$
+      grid while attaching the native NIfTI spacing under-reports every
+      distance by the resampling factor, which on CAMUS is
+      $\approx 2.2\times$. The effect is large enough to invert a
+      conclusion: under that convention our models score
+      $1.8$--$2.9$~mm and appear to halve the published baseline, while
+      the identical predictions scored at native resolution give
+      $4.1$--$5.7$~mm and merely match it. We report both, and recommend
+      that boundary distances be computed at acquisition resolution ---
+      a concrete instance of the validation concerns raised by
+      \citet{reinke2021limitations} and \citet{maierhein2024metrics}.
+
 \item Our best architecture, TransUNet, reaches Dice $= 0.9121$,
       HD95 $= 4.08$~mm; nnU-Net reaches Dice $= 0.9099$, HD95 $= 4.27$~mm
       with $6.5\times$ fewer parameters and roughly $3\times$ faster

@@ -66,6 +66,34 @@ explored sequence-aware models on CAMUS half-cycle annotations
 \citep{painchaud2022}, but these are out of scope for the present
 benchmark.
 
+Activity on echocardiographic segmentation has continued along four
+largely separate lines. The first pursues \emph{architectural} refinement:
+bi-directional token matching between frames \citep{liu2025botm},
+dynamic-learning U-Nets that enforce temporal consistency across the
+cardiac cycle \citep{qu2025dylunet}, contour-guided query-based fusion
+aimed explicitly at boundary quality \citep{ullah2026contour}, and
+selective state space models applied to paediatric echocardiography
+\citep{ye2024pmamba}. The second addresses \emph{domain shift}, which is
+the dominant obstacle to deploying any of these models across scanners
+and sites: reinforcement-learning-based domain adaptation
+\citep{judge2024domain, judge2025rlda} and interpretable quantification of
+the shift itself \citep{elyasi2026domainshift}. The third applies
+\emph{foundation models} and self-supervision, either by adapting
+general-purpose promptable segmenters to medical images
+\citep{ma2024samed}, by generating synthetic cardiac ultrasound for
+augmentation \citep{tiago2024synthetic, reynaud2025echoflow}, or by asking
+what self-supervised echocardiographic representations actually transfer
+\citep{majchrowska2026ssl}. The fourth targets the \emph{clinical
+endpoint} directly, predicting or explaining ejection fraction rather than
+the mask that produces it \citep{zhang2024lvpredict, thomas2024echonarrator,
+li2025echovlm, wang2026echoagent}.
+
+What these lines share is a comparison protocol inherited from whichever
+baseline was convenient. Each reports its own training recipe, its own
+resolution, and — as we show in Section~\ref{sec:results-boundary} — not
+always the same definition of a millimetre. That is the gap this benchmark
+addresses.
+
 EchoNet-Dynamic \citep{ouyang2020} provides a complementary large-scale
 video dataset for EF regression. We focus on CAMUS as the standard
 benchmark for \emph{segmentation-derived} EF. Because EchoNet-Dynamic
@@ -74,6 +102,34 @@ it cannot exercise the LV-epicardium, left-atrium, or biplane-EF
 components of our protocol; whether the architectural trade-offs reported
 here transfer to other echocardiographic cohorts is therefore a question
 we leave to future cross-dataset work rather than a claim we make here.
+
+\subsection{Validation practice and metric reporting}
+\label{sec:related-validation}
+
+Running alongside the architectural literature is a smaller body of work
+arguing that the field's \emph{measurement} practice, not its model
+design, is now the limiting factor. \citet{reinke2021limitations} catalogue
+the ways standard segmentation metrics mislead when applied without regard
+to structure size, shape, or resolution, and the Metrics Reloaded
+framework \citep{maierhein2024metrics} turns that catalogue into
+problem-driven recommendations for choosing and reporting them.
+\citet{isensee2024revisited} show that much of the reported progress in 3D
+medical segmentation dissolves under rigorous validation, with a
+well-configured U-Net still matching or beating architectures claimed to
+supersede it. \citet{kazaj2025claims} reach a similar conclusion for the
+CNN-versus-Transformer-versus-Mamba question specifically, and
+\citet{urooj2026mirage} audit a segmentation subfield and find that
+reported rankings shift once evaluation inconsistencies are removed.
+
+Boundary metrics are especially exposed. Hausdorff distances are reported
+in millimetres, but a millimetre is only defined once the grid on which
+the distance transform is computed and the physical spacing attached to
+that grid refer to the same image. Networks are trained at a fixed
+resolution while clinical images are not, so the two can silently diverge.
+We quantify the consequence on CAMUS in
+Section~\ref{sec:results-boundary}: the same predictions score
+$1.8$~mm or $4.1$~mm depending on which convention is used, and only the
+latter is comparable to the published baseline.
 
 \subsection{What is missing}
 \label{sec:related-gap}

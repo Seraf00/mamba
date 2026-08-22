@@ -8,7 +8,7 @@
 The top tier of our benchmark is mixed across paradigms: a hybrid
 CNN--Transformer (TransUNet) leads on bulk Dice and HD95, but a pure CNN
 (nnU-Net) leads on EF MAE \emph{and} on parameter efficiency. The
-difference between them on mean Dice is $0.0023$ --- below the
+difference between them on mean Dice is $0.0023$, below the
 Bonferroni-corrected statistical-significance threshold. A practitioner
 choosing between these two architectures should be guided not by Dice
 but by deployment constraints (nnU-Net needs $6.5\times$ fewer parameters
@@ -19,7 +19,7 @@ The pure-Transformer family (Swin-UNet) is competitive on bulk Dice
 ($0.8882$) but visibly worse on EF (MAE $10.46\%$, $r = 0.574$). This
 finding is consistent with reports that pure-attention models, despite
 strong overall overlap, can produce boundary contours that are subtly
-biased \citep{chen2021transunet} --- an effect that compounds when
+biased \citep{chen2021transunet}, an effect that compounds when
 contours feed Simpson's biplane volumetric integration.
 
 The bottom of the table is occupied by FPN-UNet, DeepLabV3+, and
@@ -41,7 +41,7 @@ indistinguishable from the 2019 result, while EF error falls by roughly
 $40\%$.
 
 We read this as evidence that the contour itself is close to the ceiling
-imposed by annotation quality on CAMUS --- inter-observer variability on
+imposed by annotation quality on CAMUS. Inter-observer variability on
 this dataset is of the same order as the differences we measure between
 architectures --- whereas the downstream clinical quantity still has room
 to improve. Where EF does improve, it is \emph{not} an architectural
@@ -60,6 +60,46 @@ This is a useful baseline calibration point for the field: cross-paper
 comparisons of CAMUS results from before $\sim 2021$ to after should be
 read with the understanding that protocol changes alone produce
 sub-millimetre HD95 improvements at constant architecture.
+
+\subsection{A boundary-metric pitfall, and what it implies for the
+literature}
+\label{sec:disc-pitfall}
+
+The correction described in Section~\ref{sec:results-boundary} is worth
+stating as a general point, because nothing about it is specific to our
+models. Segmentation networks consume a fixed input size; clinical images
+do not have one. Any pipeline that resizes an image for inference, scores
+the prediction on that resized grid, and then multiplies pixel distances
+by the spacing recorded in the original DICOM or NIfTI header will
+under-report every boundary distance by the resampling factor. Overlap
+metrics are immune --- Dice and IoU are ratios and cancel the scale ---
+which is precisely why the error survives casual inspection: a pipeline
+can produce entirely correct Dice and badly wrong HD95 from the same
+predictions, with no internal inconsistency to notice.
+
+On CAMUS the factor is $\approx 2.2$ (native acquisitions average
+$630 \times 519$ against a $256 \times 256$ network grid), and the
+consequence is not cosmetic. It moves our best model from $1.82$~mm to
+$4.08$~mm, and thereby converts ``roughly twice as accurate as the
+published baseline'' into ``indistinguishable from the published
+baseline.'' Both numbers come from the same weights and the same test
+split; only the measurement convention differs.
+
+We therefore suggest reading sub-$2$~mm HD95 values on CAMUS with
+caution, and we make no claim about which published results are affected
+--- establishing that would require the evaluation code for each, which is
+usually unavailable. The constructive recommendation is narrower and
+checkable: report the resolution at which boundary metrics were computed,
+and prefer acquisition resolution, since that is the only convention under
+which a millimetre means the same thing across papers. This is a concrete
+instance of the reporting problems documented by
+\citet{reinke2021limitations} and \citet{maierhein2024metrics}, and it is
+consistent with the broader finding of \citet{isensee2024revisited} and
+\citet{kazaj2025claims} that apparent architectural progress in medical
+segmentation frequently does not survive standardised validation. Our own
+benchmark is an instance of that pattern rather than an exception to it:
+once measurement is held fixed, nine architectures spanning three
+paradigms separate by less than the noise floor on the boundary axis.
 
 \subsection{Design choices that matter}
 \label{sec:disc-design}
