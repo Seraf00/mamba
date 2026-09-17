@@ -41,10 +41,13 @@ class MambaViTBlock(nn.Module):
         mamba_type: str = 'vmamba',
         d_state: int = 16,
         drop: float = 0.0,
-        attn_drop: float = 0.0
+        attn_drop: float = 0.0,
+        use_mamba: bool = True
     ):
         super().__init__()
-        
+
+        self.use_mamba = use_mamba
+
         # Multi-head self-attention
         self.norm1 = nn.LayerNorm(dim)
         self.attn = nn.MultiheadAttention(
@@ -62,16 +65,19 @@ class MambaViTBlock(nn.Module):
             nn.Dropout(drop)
         )
         
-        # Mamba path
-        self.norm3 = nn.LayerNorm(dim)
-        self.mamba = create_mamba_block(
-            variant=mamba_type,
-            dim=dim,
-            d_state=d_state
-        )
-        
-        # Fusion gate
-        self.gate = nn.Parameter(torch.zeros(1))
+        # Mamba path. Dropped entirely when the encoder position is
+        # ablated, leaving a plain ViT block -- norm3 and the fusion gate go
+        # with it, since neither has any meaning without the Mamba branch.
+        if use_mamba:
+            self.norm3 = nn.LayerNorm(dim)
+            self.mamba = create_mamba_block(
+                variant=mamba_type,
+                dim=dim,
+                d_state=d_state
+            )
+
+            # Fusion gate
+            self.gate = nn.Parameter(torch.zeros(1))
     
     def forward(self, x: torch.Tensor, H: int, W: int) -> torch.Tensor:
         """
@@ -89,15 +95,16 @@ class MambaViTBlock(nn.Module):
         x = x + self.mlp(self.norm2(x))
         
         # Mamba path (reshape to spatial format)
-        B, N, C = x.shape
-        x_spatial = self.norm3(x).view(B, H, W, C).permute(0, 3, 1, 2)  # B, C, H, W
-        mamba_out = self.mamba(x_spatial)
-        mamba_out = mamba_out.permute(0, 2, 3, 1).view(B, N, C)  # B, N, C
-        
-        # Gated fusion
-        gate = torch.sigmoid(self.gate)
-        x = x + gate * mamba_out
-        
+        if self.use_mamba:
+            B, N, C = x.shape
+            x_spatial = self.norm3(x).view(B, H, W, C).permute(0, 3, 1, 2)
+            mamba_out = self.mamba(x_spatial)
+            mamba_out = mamba_out.permute(0, 2, 3, 1).view(B, N, C)
+
+            # Gated fusion
+            gate = torch.sigmoid(self.gate)
+            x = x + gate * mamba_out
+
         return x
 
 
@@ -112,10 +119,11 @@ class MambaViTEncoder(nn.Module):
         mlp_ratio: float = 4.0,
         mamba_type: str = 'vmamba',
         d_state: int = 16,
-        drop: float = 0.0
+        drop: float = 0.0,
+        use_mamba: bool = True
     ):
         super().__init__()
-        
+
         self.blocks = nn.ModuleList([
             MambaViTBlock(
                 dim=embed_dim,
@@ -123,7 +131,8 @@ class MambaViTEncoder(nn.Module):
                 mlp_ratio=mlp_ratio,
                 mamba_type=mamba_type,
                 d_state=d_state,
-                drop=drop
+                drop=drop,
+                use_mamba=use_mamba
             )
             for _ in range(num_layers)
         ])
@@ -145,10 +154,12 @@ class MambaCascadedUpsampler(nn.Module):
         skip_channels: List[int],
         out_channels: int = 256,
         mamba_type: str = 'vmamba',
-        d_state: int = 16
+        d_state: int = 16,
+        use_mamba_skip: bool = True
     ):
         super().__init__()
-        
+
+        self.use_mamba_skip = use_mamba_skip
         self.num_stages = len(skip_channels)
         self.ups = nn.ModuleList()
         self.convs = nn.ModuleList()
@@ -162,15 +173,18 @@ class MambaCascadedUpsampler(nn.Module):
                 nn.ConvTranspose2d(current_channels, out_channels, kernel_size=2, stride=2)
             )
             
-            # Mamba skip connection
-            self.mamba_skips.append(
-                MambaSkipConnection(
-                    encoder_channels=skip_ch,
-                    decoder_channels=out_channels,
-                    mamba_type=mamba_type,
-                    d_state=d_state
+            # Mamba skip connection. When the skip position is ablated the
+            # raw encoder feature is concatenated instead, which leaves the
+            # fusion conv's input channels unchanged.
+            if use_mamba_skip:
+                self.mamba_skips.append(
+                    MambaSkipConnection(
+                        encoder_channels=skip_ch,
+                        decoder_channels=out_channels,
+                        mamba_type=mamba_type,
+                        d_state=d_state
+                    )
                 )
-            )
             
             # Fusion conv
             self.convs.append(
@@ -193,18 +207,17 @@ class MambaCascadedUpsampler(nn.Module):
             x: Feature map from transformer (B, C, H, W)
             skips: Skip connections from CNN encoder (high to low resolution)
         """
-        for up, conv, mamba_skip, skip in zip(
-            self.ups, self.convs, self.mamba_skips, skips
-        ):
+        for i, (up, conv, skip) in enumerate(zip(self.ups, self.convs, skips)):
             x = up(x)
-            
+
             # Handle size mismatch
             if x.shape[2:] != skip.shape[2:]:
                 x = F.interpolate(x, size=skip.shape[2:], mode='bilinear', align_corners=True)
-            
+
             # Mamba-enhanced skip
-            skip = mamba_skip(skip, x)
-            
+            if self.use_mamba_skip:
+                skip = self.mamba_skips[i](skip, x)
+
             x = torch.cat([x, skip], dim=1)
             x = conv(x)
         
@@ -246,10 +259,21 @@ class MambaTransUNet(nn.Module):
         patch_size: int = 1,
         mamba_type: Literal['mamba', 'mamba2', 'vmamba'] = 'vmamba',
         d_state: int = 16,
-        pretrained: bool = True
+        pretrained: bool = True,
+        mamba_in_encoder: bool = True,
+        mamba_in_skip: bool = True,
+        mamba_in_bottleneck: bool = True
     ):
         super().__init__()
-        
+
+        # Which SSM positions this instance carries; persisted by the trainer
+        # so the ablation table is generated from the checkpoint, not the name.
+        self.mamba_positions = tuple(
+            p for p, on in (('encoder', mamba_in_encoder),
+                            ('skip', mamba_in_skip),
+                            ('bottleneck', mamba_in_bottleneck)) if on)
+        self.mamba_in_bottleneck = mamba_in_bottleneck
+
         self.img_size = img_size if isinstance(img_size, tuple) else (img_size, img_size)
         self.embed_dim = embed_dim
         self.mamba_type = mamba_type
@@ -301,16 +325,18 @@ class MambaTransUNet(nn.Module):
             num_heads=num_heads,
             num_layers=num_transformer_layers,
             mamba_type=mamba_type,
-            d_state=d_state
+            d_state=d_state,
+            use_mamba=mamba_in_encoder
         )
         
         # Additional Mamba bottleneck
-        self.mamba_bottleneck = MambaBottleneck(
-            dim=embed_dim,
-            mamba_type=mamba_type,
-            depth=2,
-            d_state=d_state
-        )
+        if mamba_in_bottleneck:
+            self.mamba_bottleneck = MambaBottleneck(
+                dim=embed_dim,
+                mamba_type=mamba_type,
+                depth=2,
+                d_state=d_state
+            )
         
         # Reshape for decoder
         self.feat_size = feat_size // patch_size
@@ -322,7 +348,8 @@ class MambaTransUNet(nn.Module):
             skip_channels=skip_channels,
             out_channels=256,
             mamba_type=mamba_type,
-            d_state=d_state
+            d_state=d_state,
+            use_mamba_skip=mamba_in_skip
         )
         
         # Final upsampling and segmentation head
@@ -388,7 +415,8 @@ class MambaTransUNet(nn.Module):
         x = x.transpose(1, 2).view(B, C, H, W)
         
         # Mamba bottleneck
-        x = self.mamba_bottleneck(x)
+        if self.mamba_in_bottleneck:
+            x = self.mamba_bottleneck(x)
         
         # Cascaded upsampler with skip connections
         skips = [c3, c2, c1]  # High to low resolution relative to decoder

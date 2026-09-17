@@ -1,0 +1,77 @@
+\section{Method}
+\label{sec:method}
+
+\subsection{Data and splits}
+
+CAMUS~\cite{leclerc2019camus} provides apical two- and four-chamber views for
+500 patients, with expert delineations of the LV endocardium, LV myocardium and
+left atrium at end-diastole (ED) and end-systole (ES). We use the official
+400/50/50 split, verified byte-identical to the \texttt{subgroup} lists released
+with the dataset, giving $1600$ training and $200$ test frames. Each patient also
+carries a fully annotated half cardiac cycle, used as a data-scaling ablation
+($17$k frames). Images are exported at native resolution with per-image
+min--max normalisation; no resampling to a common grid occurs, so the native
+pixel spacing (typically $0.308$\,mm) remains valid for boundary metrics.
+
+\subsection{The annulus problem}
+\label{sec:encoding}
+
+CAMUS labels form a 4-class map: background, endocardium ($\ell{=}1$),
+myocardium ($\ell{=}2$) and atrium ($\ell{=}3$). The myocardium is the ring
+between the endocardial and epicardial contours -- topologically an annulus, and
+so not representable as the single closed polygon a YOLO label must be.
+
+\textbf{Filled-contour decomposition (ours).} We define the second class as the
+\emph{epicardial disc} $\ell\in\{1,2\}$, which is simply connected, so all three
+trained classes are blob-shaped. At inference the CAMUS map is recomposed by
+painting the predicted disc as myocardium and overwriting its interior with the
+predicted endocardium:
+\begin{equation}
+\hat{M}_{\text{myo}} \;=\; \hat{M}_{\text{epi}} \setminus \hat{M}_{\text{endo}} .
+\label{eq:decomp}
+\end{equation}
+The mask head never represents a hole; the hole emerges from two predictions.
+
+\textbf{Seam-cut annulus.} Alternatively the ring is written as one polygon
+traversing the outer contour, crossing to the inner along a zero-width seam, and
+returning in opposite winding. Scan-line filling -- including the routine
+Ultralytics uses -- honours this and yields a true annulus, but the mask head
+must learn a shape whose interior is excluded. Taking only the \emph{outer}
+contour is not a third option: it \emph{is} the epicardial contour, hence
+identical to the filled decomposition.
+
+Both encodings are lossy at finite vertex budgets, so we measure their ceiling
+directly: ground-truth maps are converted to polygons, rasterised back, and
+scored against the untouched native ground truth.
+
+\subsection{Evaluation protocol}
+\label{sec:protocol}
+
+To keep our numbers comparable with published baselines on this split we
+reproduce their protocol rather than improve on it. Overlap metrics are computed
+per frame and class on a $256\times256$ grid; boundary metrics (HD95, ASSD) at
+\emph{native} resolution with each patient's true pixel spacing, in millimetres
+-- computing the latter on a resampled grid under-reports distances by the
+resampling factor. Predicted masks are resampled to native resolution by nearest
+neighbour, keeping the highest-confidence instance per class. We verified this
+reimplementation against the reference metric code: HD95 agrees to
+$2\times10^{-12}$\,mm and ASSD exactly.
+
+\subsection{Training configuration}
+
+Unless stated otherwise we train YOLO26n-seg from COCO weights at $640$\,px,
+batch 8, 100 epochs with early stopping, on one NVIDIA RTX~4060 Laptop GPU
+(8\,GB). YOLO26 is the newest generation with published segmentation weights and
+is \emph{end-to-end}: it predicts a fixed instance set with no non-maximum
+suppression, removing a data-dependent stage from the latency budget. We use
+Ultralytics' automatic optimiser selection, which chooses MuSGD at lr $0.01$
+here and overrides any user learning rate; learning rate is therefore swept only
+in the dedicated arm of Sec.~\ref{sec:experiments}.
+
+Several components of the stock augmentation have no anatomical justification on
+sector ultrasound: mosaic composites sectors into images that cannot occur,
+horizontal flipping violates the left/right convention of an apical view, and
+hue/saturation jitter is meaningless on grayscale. We adopt an \emph{echo-aware}
+default -- mosaic, mixup, copy-paste and flips off; mild affine and brightness
+jitter retained -- chosen on principle and cost, \emph{not} because it measures
+better: it is statistically indistinguishable from the stock recipe.

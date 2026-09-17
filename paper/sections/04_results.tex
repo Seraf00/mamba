@@ -37,6 +37,14 @@ LA Dice ranges $0.8492$ (DenseContextU-Net) to $0.9208$ (TransUNet);
 LV-epi is consistently the hardest class for every architecture (mean
 across models: $\Dice \approx 0.85$, versus $\approx 0.92$ for LV-endo).
 
+Table~\ref{tab:iou} reports the same decomposition under intersection-over-union.
+IoU orders the architectures almost identically to Dice, which is expected of two
+monotonically related overlap measures; we report it because it is the more
+common metric outside medical imaging and makes this benchmark comparable to
+that literature.
+
+\input{tables/T8_iou}
+
 %------------------------------------------------------------------------------
 \subsection{Boundary accuracy (HD95 and ASSD in mm)}
 \label{sec:results-boundary}
@@ -86,23 +94,90 @@ Table~\ref{tab:ef} reports biplane Simpson's EF error per architecture.
 
 \input{tables/T4_ef}
 
-\paragraph{Best EF agreement.}
-\textbf{nnU-Net} produces the most accurate EF estimates (MAE $= 5.52\%$,
-$r = 0.828$, Bland--Altman bias $+0.84\%$, 95\% limits of agreement
-$[-14.2, +15.9]\%$, the narrowest of any architecture tested). The near-zero mean bias is comparable to reported
-echocardiographer inter-observer LVEF error ($\sim$$7$--$10\%$), but the
-wide limits of agreement show that per-patient agreement remains looser
-than the mean error alone suggests; we therefore read this as a
-mask-derived, like-for-like comparison rather than a claim of clinical
-parity. UNet-V1 and UNet-ResNet
-(both MAE $= 6.78\%$) follow, with UNet-ResNet attaining the
-highest EF correlation ($r = 0.832$, marginally ahead of nnU-Net's
-$0.828$). Notably, the best-Dice architecture is not the best on the
-clinical axis: TransUNet reaches only MAE $= 7.64\%$ ($r = 0.799$),
-behind three CNNs that score lower on bulk overlap. The Transformer-only Swin-UNet shows
-degraded EF performance (MAE $= 10.46\%$, $r = 0.574$) despite competitive
-bulk Dice, suggesting it produces accurate \emph{but} biased contours
-(consistent with its Bland--Altman bias of $-4.10\%$).
+\paragraph{Best EF agreement, and the floor beneath it.}
+\textbf{UNet-V1} produces the most accurate EF estimates
+(MAE $= 6.62\%$, Bland--Altman bias
+$-0.42\%$), with TransUNet
+(MAE $= 7.36\%$) and UNet-ResNet
+(MAE $= 7.42\%$) close behind. Correlation separates them even
+less: TransUNet attains the highest at $r = 0.826$, ahead of
+UNet-V1's $0.825$, so the two lead on different EF statistics.
+
+The informative row, however, is the last one. Passing the \emph{ground-truth}
+masks through the identical pipeline gives MAE $= 5.44\%$ ($r = 0.863$), so no
+architecture comes within $1.2$ points of the floor and none crosses it. That
+residual is not a segmentation error: it is what biplane Simpson's method loses
+when it reconstructs a three-dimensional ventricle from two views, plus the
+disagreement between the clinically recorded EF and any mask-derived estimate.
+Reported inter-observer LVEF error of $\sim$$7$--$10\%$ sits at the same scale,
+which is the honest comparison to draw --- a like-for-like mask-derived
+agreement, not a claim of clinical parity.
+
+One qualification on the word ``floor''. The oracle carries a Bland--Altman
+bias of $+3.12\%$: mask-derived EF systematically overestimates the recorded
+clinical value, whatever the masks. Mean absolute error is therefore not
+monotone in segmentation quality, because a model whose own bias runs the other
+way has its errors partially cancel and can post a lower MAE without being more
+faithful to the anatomy. The oracle bounds what \emph{perfect} masks achieve
+under this estimator; it does not bound MAE in general. For the nine
+architectures here the distinction is moot --- none approaches $5.44\%$, and
+none exceeds the oracle's $r = 0.863$ either --- but any comparison that puts a
+model at or under the oracle should be read on correlation and bias rather than
+on MAE alone.
+
+Read against that floor, EF separates architectures far less sharply than bulk
+overlap does: the spread from best to worst is $4.0$ points on a quantity
+whose irreducible component is $5.4$. The limits of agreement make the same
+point per patient, spanning
+$[-15.7, +14.8]\%$
+even for the best model.
+
+Two ordering effects survive and are worth stating. The best-Dice architecture
+is not the best on the clinical axis --- TransUNet is second on EF --- and
+nnU-Net, which leads no EF column, sits mid-table at $8.32\%$. The
+Transformer-only Swin-UNet remains weak among the competitive models
+($9.44\%$, $r = 0.640$) despite adequate bulk Dice,
+consistent with contours that are locally plausible but systematically biased in
+a way Simpson's integration compounds.
+
+\paragraph{Arithmetic precision changes the EF table.}
+Every EF value above is computed in full FP32. This is worth stating because it
+is not the default: PyTorch enables TensorFloat-32 for convolution and matrix
+multiplication on Ampere-class and later GPUs, and TF32 carries a 10-bit
+mantissa against FP32's 23. We found that this silently changes the reported
+result. Disabling TF32 moves FPN-UNet's EF MAE from $9.72$ to $10.60$ and
+TransUNet's by $0.60$ --- differences larger than the gaps separating adjacent
+architectures in this table.
+
+We isolated the cause by ablating each control separately on one architecture.
+Run-to-run variation with everything unpinned is only $0.02$ points; forcing
+cuDNN determinism changes nothing at all; requiring deterministic algorithms
+accounts for $0.28$; disabling TF32 accounts for the entire remaining shift.
+The effect is not rounding. Twenty-six of the fifty test patients change, some
+by as much as $14$ EF points and some end-diastolic volumes by around $20$~ml,
+because a precision change flips pixels along an ambiguous basal boundary, the
+largest-connected-component filter turns that into a discrete choice, and
+Simpson's method needs all four of a patient's frames to score them at all.
+
+FP32 is the more accurate computation, so the previously reported figures were
+flattered by reduced precision rather than harmed by it.
+
+With TF32 disabled and seeds fixed the pipeline becomes reproducible, and
+markedly more portable than we expected. Independent runs in separate processes
+return bit-identical values for all nine architectures. Repeating the
+measurement on a different operating system, with a different PyTorch build
+($2.10.0$ against $2.9.1$) and a different image-processing library version,
+reproduces eight of the nine exactly; the ninth differs by $0.04$ percentage
+points and the ranking is unchanged. Before pinning, the same cross-environment
+comparison moved six of nine architectures and exchanged third and fourth place.
+Arithmetic precision, not the software environment, was doing almost all of the
+work.
+
+We report this because a benchmark that does not state its arithmetic precision
+is not reproducible even in principle, and because the effect here exceeds the
+architectural differences the benchmark exists to measure. The practical
+recommendation is one line of configuration: disable TF32 when reporting a
+derived clinical quantity, and say that you did.
 
 %------------------------------------------------------------------------------
 \subsection{Robustness across image quality}
@@ -162,17 +237,29 @@ Pareto front is highlighted.}
 \subsection{Statistical significance}
 \label{sec:results-significance}
 
-We test all $\binom{9}{2}=36$ pairwise model differences on per-sample
-mean Dice with the Wilcoxon signed-rank test, Bonferroni-corrected.
+We test all $\binom{9}{2}=36$ pairwise model differences on mean Dice with the
+Wilcoxon signed-rank test, Bonferroni-corrected. The test is computed over the
+$50$ patients rather than the $200$ frames. The frames are two views and two
+phases of each patient, so treating them as independent observations inflates
+the sample fourfold and lowers the bar for significance; the patient is the unit
+about which any clinical claim is made. For transparency: on this benchmark the
+choice changes nothing --- $27$ of the $36$ pairs are significant under either
+unit --- because the differences that survive correction are far larger than the
+extra power the wrong unit would buy. We report the patient-level test because
+it is the correct estimand, not because it alters the outcome.
 
 \input{tables/T7_wilcoxon}
 
 \paragraph{Top-tier band.}
-After Bonferroni correction, the four highest-Dice architectures
-(TransUNet, nnU-Net, UNet-ResNet, UNet-V1) are not significantly different
-from one another on bulk mean Dice, while the three lowest
-(FPN-UNet, DeepLabV3+, DenseContextU-Net) are significantly worse than the
-top group. Full pairwise $p$-values are released as supplementary data.
+The nine non-significant pairs form exactly two cliques and nothing else. All
+six pairs among the four highest-Dice architectures (TransUNet, nnU-Net,
+UNet-ResNet, UNet-V1) are indistinguishable, as are all three among the lowest
+(DeepLabV3+, FPN-UNet, Dense\-Context\-U-Net); every one of the remaining $27$ pairs
+separates. The leaderboard is therefore better read as three tiers than as a
+ranking of nine. Two of the three architectures in the lower clique are among
+those whose training stopped early, so that grouping may reflect a shared
+training artefact rather than a shared architectural limit. Full pairwise
+$p$-values are released as supplementary data.
 
 \paragraph{Small Dice gaps are within training variance.}
 The differences separating the top-tier architectures are of order
@@ -189,13 +276,19 @@ discussed in Section~\ref{sec:discussion}.
 
 The critical-difference diagram of Figure~\ref{fig:cd} renders the
 banding visually: architectures joined by a horizontal bar are not
-significantly different in average per-sample rank. Average rank need
-not track mean Dice. TransUNet attains the best mean Dice yet only a
-middling average rank ($4.09$, sixth of nine), because it wins many
-samples by small margins while occasionally losing by larger ones. It
-nonetheless falls inside the same top clique as the leading CNNs, which
-reinforces that the top tier is a statistically equivalent band rather
-than a strict order.
+significantly different in average per-sample rank. Here average rank
+tracks mean Dice closely --- the two orderings agree for all nine
+architectures --- and TransUNet leads on both, with an average rank of
+$2.96$ across the $200$ test frames against nnU-Net's $3.10$.
+
+Aggregating to the $50$ patients before ranking, which is the correct
+inferential unit given that the $200$ frames are four views and phases of
+each patient, leaves TransUNet first ($2.68$) but exchanges second and
+third between nnU-Net ($2.92$) and UNet-V1 ($2.82$). The four leading
+architectures span only $0.37$ of a rank at the frame level and fall
+inside a single clique, and their order is not stable to the choice of
+aggregation unit. Both observations point the same way: the top tier is a
+statistically equivalent band, not a ranking.
 
 \begin{figure}[t]
 \centering

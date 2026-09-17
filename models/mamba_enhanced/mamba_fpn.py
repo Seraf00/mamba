@@ -34,19 +34,23 @@ class MambaLateralConnection(nn.Module):
         in_channels: int,
         out_channels: int,
         mamba_type: str = 'vmamba',
-        d_state: int = 16
+        d_state: int = 16,
+        use_mamba: bool = True
     ):
         super().__init__()
-        
+
+        self.use_mamba = use_mamba
+
         # Standard 1x1 conv for channel reduction
         self.lateral = nn.Conv2d(in_channels, out_channels, 1)
-        
+
         # Mamba for enhanced feature transformation
-        self.mamba = create_mamba_block(
-            variant=mamba_type,
-            dim=out_channels,
-            d_state=d_state
-        )
+        if use_mamba:
+            self.mamba = create_mamba_block(
+                variant=mamba_type,
+                dim=out_channels,
+                d_state=d_state
+            )
         
         # Refinement
         self.refine = nn.Sequential(
@@ -57,7 +61,8 @@ class MambaLateralConnection(nn.Module):
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.lateral(x)
-        x = x + self.mamba(x)
+        if self.use_mamba:
+            x = x + self.mamba(x)
         return self.refine(x)
 
 
@@ -68,16 +73,20 @@ class MambaTopDownPath(nn.Module):
         self,
         channels: int,
         mamba_type: str = 'vmamba',
-        d_state: int = 16
+        d_state: int = 16,
+        use_mamba: bool = True
     ):
         super().__init__()
-        
+
+        self.use_mamba = use_mamba
+
         # Mamba for temporal/spatial context in top-down flow
-        self.mamba = create_mamba_block(
-            variant=mamba_type,
-            dim=channels,
-            d_state=d_state
-        )
+        if use_mamba:
+            self.mamba = create_mamba_block(
+                variant=mamba_type,
+                dim=channels,
+                d_state=d_state
+            )
         
         # Fusion conv
         self.fusion = nn.Sequential(
@@ -91,7 +100,7 @@ class MambaTopDownPath(nn.Module):
         top_up = F.interpolate(top, size=lateral.shape[2:], mode='nearest')
         
         # Mamba enhancement on upsampled features
-        top_mamba = top_up + self.mamba(top_up)
+        top_mamba = top_up + self.mamba(top_up) if self.use_mamba else top_up
         
         # Fusion
         fused = self.fusion(torch.cat([top_mamba, lateral], dim=1))
@@ -107,28 +116,31 @@ class MambaFPNFusion(nn.Module):
         channels: int,
         num_levels: int = 4,
         mamba_type: str = 'vmamba',
-        d_state: int = 16
+        d_state: int = 16,
+        use_mamba: bool = True
     ):
         super().__init__()
-        
+
+        self.use_mamba = use_mamba
         self.num_levels = num_levels
         
         # Per-level Mamba processing
-        self.level_mamba = nn.ModuleList([
-            create_mamba_block(
+        if use_mamba:
+            self.level_mamba = nn.ModuleList([
+                create_mamba_block(
+                    variant=mamba_type,
+                    dim=channels,
+                    d_state=d_state
+                )
+                for _ in range(num_levels)
+            ])
+
+            # Cross-scale Mamba after concatenation
+            self.cross_mamba = create_mamba_block(
                 variant=mamba_type,
-                dim=channels,
+                dim=channels * num_levels,
                 d_state=d_state
             )
-            for _ in range(num_levels)
-        ])
-        
-        # Cross-scale Mamba after concatenation
-        self.cross_mamba = create_mamba_block(
-            variant=mamba_type,
-            dim=channels * num_levels,
-            d_state=d_state
-        )
         
         # Final projection
         self.proj = nn.Sequential(
@@ -140,14 +152,16 @@ class MambaFPNFusion(nn.Module):
     def forward(self, features: List[torch.Tensor], target_size: tuple) -> torch.Tensor:
         # Process each level with Mamba
         processed = []
-        for feat, mamba in zip(features, self.level_mamba):
-            feat = feat + mamba(feat)
+        for i, feat in enumerate(features):
+            if self.use_mamba:
+                feat = feat + self.level_mamba[i](feat)
             feat = F.interpolate(feat, size=target_size, mode='bilinear', align_corners=True)
             processed.append(feat)
-        
+
         # Concatenate and cross-scale Mamba
         x = torch.cat(processed, dim=1)
-        x = x + self.cross_mamba(x)
+        if self.use_mamba:
+            x = x + self.cross_mamba(x)
         
         return self.proj(x)
 
@@ -160,10 +174,12 @@ class MambaFPNNeck(nn.Module):
         in_channels_list: List[int],
         out_channels: int = 256,
         mamba_type: str = 'vmamba',
-        d_state: int = 16
+        d_state: int = 16,
+        use_mamba_skip: bool = True,
+        use_mamba_neck: bool = True
     ):
         super().__init__()
-        
+
         self.num_levels = len(in_channels_list)
         self.out_channels = out_channels
         
@@ -172,7 +188,8 @@ class MambaFPNNeck(nn.Module):
             MambaLateralConnection(
                 in_ch, out_channels,
                 mamba_type=mamba_type,
-                d_state=d_state
+                d_state=d_state,
+                use_mamba=use_mamba_skip
             )
             for in_ch in in_channels_list
         ])
@@ -182,7 +199,8 @@ class MambaFPNNeck(nn.Module):
             MambaTopDownPath(
                 out_channels,
                 mamba_type=mamba_type,
-                d_state=d_state
+                d_state=d_state,
+                use_mamba=use_mamba_neck
             )
             for _ in range(self.num_levels - 1)
         ])
@@ -225,16 +243,20 @@ class MambaFPNHead(nn.Module):
         num_levels: int,
         num_classes: int,
         mamba_type: str = 'vmamba',
-        d_state: int = 16
+        d_state: int = 16,
+        use_mamba_neck: bool = True,
+        mamba_in_decoder: bool = True
     ):
         super().__init__()
         
         # Mamba fusion across scales
+        self.mamba_in_decoder = mamba_in_decoder
         self.fusion = MambaFPNFusion(
             in_channels,
             num_levels=num_levels,
             mamba_type=mamba_type,
-            d_state=d_state
+            d_state=d_state,
+            use_mamba=use_mamba_neck
         )
         
         # Upsampling and refinement
@@ -248,11 +270,12 @@ class MambaFPNHead(nn.Module):
         )
         
         # Final Mamba for semantic consistency
-        self.final_mamba = create_mamba_block(
-            variant=mamba_type,
-            dim=in_channels // 4,
-            d_state=d_state
-        )
+        if mamba_in_decoder:
+            self.final_mamba = create_mamba_block(
+                variant=mamba_type,
+                dim=in_channels // 4,
+                d_state=d_state
+            )
         
         self.seg_head = nn.Conv2d(in_channels // 4, num_classes, 1)
     
@@ -271,7 +294,8 @@ class MambaFPNHead(nn.Module):
         x = self.upsample(x)
         
         # Final Mamba
-        x = x + self.final_mamba(x)
+        if self.mamba_in_decoder:
+            x = x + self.final_mamba(x)
         
         # Segmentation
         out = self.seg_head(x)
@@ -310,10 +334,23 @@ class MambaFPN(nn.Module):
         fpn_channels: int = 256,
         mamba_type: Literal['mamba', 'mamba2', 'vmamba'] = 'vmamba',
         d_state: int = 16,
-        pretrained: bool = True
+        pretrained: bool = True,
+        mamba_in_skip: bool = True,
+        mamba_in_neck: bool = True,
+        mamba_in_bottleneck: bool = True,
+        mamba_in_decoder: bool = True
     ):
         super().__init__()
-        
+
+        # Which SSM positions this instance carries; persisted by the trainer
+        # so the ablation table is generated from the checkpoint, not the name.
+        self.mamba_positions = tuple(
+            p for p, on in (('skip', mamba_in_skip),
+                            ('neck', mamba_in_neck),
+                            ('bottleneck', mamba_in_bottleneck),
+                            ('decoder', mamba_in_decoder)) if on)
+        self.mamba_in_bottleneck = mamba_in_bottleneck
+
         self.mamba_type = mamba_type
         
         # Input adapter for single channel
@@ -346,19 +383,22 @@ class MambaFPN(nn.Module):
         self.layer4 = resnet.layer4
         
         # Mamba bottleneck
-        self.bottleneck = MambaBottleneck(
-            dim=self.backbone_channels[-1],
-            mamba_type=mamba_type,
-            depth=2,
-            d_state=d_state
-        )
+        if mamba_in_bottleneck:
+            self.bottleneck = MambaBottleneck(
+                dim=self.backbone_channels[-1],
+                mamba_type=mamba_type,
+                depth=2,
+                d_state=d_state
+            )
         
         # FPN Neck with Mamba
         self.fpn = MambaFPNNeck(
             in_channels_list=self.backbone_channels,
             out_channels=fpn_channels,
             mamba_type=mamba_type,
-            d_state=d_state
+            d_state=d_state,
+            use_mamba_skip=mamba_in_skip,
+            use_mamba_neck=mamba_in_neck
         )
         
         # Segmentation Head with Mamba fusion
@@ -367,7 +407,9 @@ class MambaFPN(nn.Module):
             num_levels=4,
             num_classes=num_classes,
             mamba_type=mamba_type,
-            d_state=d_state
+            d_state=d_state,
+            use_mamba_neck=mamba_in_neck,
+            mamba_in_decoder=mamba_in_decoder
         )
         
         self._init_weights()
@@ -407,7 +449,8 @@ class MambaFPN(nn.Module):
         c4 = self.layer4(c3)
         
         # Mamba bottleneck
-        c4 = self.bottleneck(c4)
+        if self.mamba_in_bottleneck:
+            c4 = self.bottleneck(c4)
         
         # FPN
         fpn_features = self.fpn([c1, c2, c3, c4])

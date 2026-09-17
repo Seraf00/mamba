@@ -1,0 +1,24 @@
+\begin{table}[t]
+\centering
+\caption{Ejection fraction against the clinically recorded value, computed with the official CAMUS biplane Simpson implementation at native resolution with a largest-component filter (Sec.~\ref{sec:ef}). The oracle row applies the identical pipeline to the ground-truth masks and bounds what any segmentation can achieve.}
+\label{tab:ef}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Model & MAE (\%) & bias (\%) & $r$ & EDV (ml) \\
+\midrule
+UNet-V1 & 6.62 & -0.42 & 0.825 & 105.4 \\
+TransUNet & 7.36 & -1.20 & 0.826 & 105.9 \\
+UNet-ResNet & 7.42 & -0.98 & 0.807 & 107.1 \\
+UNet-V2 & 7.56 & 0.80 & 0.781 & 107.9 \\
+nnU-Net & 8.32 & 0.76 & 0.783 & 106.5 \\
+\textbf{YOLO26n-seg} & 9.24 & -4.08 & 0.756 & 105.3 \\
+DenseCtx-UNet & 9.38 & -7.22 & 0.763 & 100.6 \\
+Swin-UNet & 9.44 & -1.96 & 0.640 & 101.4 \\
+DeepLabV3+ & 9.58 & -7.14 & 0.706 & 90.4 \\
+FPN-UNet & 10.60 & -8.52 & 0.704 & 96.1 \\
+\midrule
+\textit{oracle (ground-truth masks)} & 5.44 & 3.12 & 0.863 & 108.0 \\
+\bottomrule
+\end{tabular}
+\end{table}

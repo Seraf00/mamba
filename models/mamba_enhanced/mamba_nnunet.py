@@ -205,11 +205,20 @@ class MambaNNUNet(nn.Module):
         mamba_in_encoder: bool = True,
         mamba_in_skip: bool = True,
         use_dual_bottleneck: bool = True,
+        mamba_in_bottleneck: bool = True,
         deep_supervision: bool = True,
         d_state: int = 16
     ):
         super().__init__()
-        
+
+        # Which SSM positions this instance carries; persisted by the trainer
+        # so the ablation table is generated from the checkpoint, not the name.
+        self.mamba_positions = tuple(
+            p for p, on in (('encoder', mamba_in_encoder),
+                            ('skip', mamba_in_skip),
+                            ('bottleneck', mamba_in_bottleneck)) if on)
+        self.mamba_in_bottleneck = mamba_in_bottleneck
+
         self.in_channels = in_channels
         self.num_classes = num_classes
         self.deep_supervision = deep_supervision
@@ -246,18 +255,19 @@ class MambaNNUNet(nn.Module):
             )
         
         # Dual-path Mamba bottleneck
-        if use_dual_bottleneck:
-            self.bottleneck = DualPathMambaBottleneck(
-                dim=features_per_stage[-1],
-                mamba_types=('mamba', mamba_type),  # Use mamba + specified type
-                d_state=d_state
-            )
-        else:
-            self.bottleneck = MambaBottleneck(
-                dim=features_per_stage[-1],
-                mamba_type=mamba_type,
-                d_state=d_state
-            )
+        if mamba_in_bottleneck:
+            if use_dual_bottleneck:
+                self.bottleneck = DualPathMambaBottleneck(
+                    dim=features_per_stage[-1],
+                    mamba_types=('mamba', mamba_type),  # mamba + specified type
+                    d_state=d_state
+                )
+            else:
+                self.bottleneck = MambaBottleneck(
+                    dim=features_per_stage[-1],
+                    mamba_type=mamba_type,
+                    d_state=d_state
+                )
         
         # Decoder
         self.decoder_stages = nn.ModuleList()
@@ -322,7 +332,8 @@ class MambaNNUNet(nn.Module):
             encoder_features.append(x)
         
         # Bottleneck
-        x = self.bottleneck(x)
+        if self.mamba_in_bottleneck:
+            x = self.bottleneck(x)
         
         # Decoder with skip connections
         skips = encoder_features[:-1][::-1]

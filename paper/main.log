@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.26 (MiKTeX 24.4) (preloaded format=pdflatex 2024.9.14)  22 AUG 2026 20:45
+This is pdfTeX, Version 3.141592653-2.6-1.40.26 (MiKTeX 24.4) (preloaded format=pdflatex 2024.9.14)  1 SEP 2026 06:31
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -863,24 +863,247 @@ File: epstopdf-sys.cfg 2021/03/18 v2.0 Configuration of epstopdf for MiKTeX
 * (1in=72.27pt=25.4mm, 1cm=28.453pt)
 
 Package hyperref Info: Link coloring ON on input line 44.
-(main.out) (main.out
-! I can't write on file `main.pdf'.
-(Press Enter to retry, or Control-C to exit; default file extension is `.pdf')
-Please type another file name for output
-! Emergency stop.
-\Hy@OutlineName ...utline goto name{#2}count#3{#4}
-                                                  
-l.1 ...\000o\000d\000u\000c\000t\000i\000o\000n}{}
-                                                  % 1
-*** (job aborted, file error in nonstop mode)
+(main.out) (main.out)
+\@outlinefile=\write4
+\openout4 = `main.out'.
 
- 
+Package caption Info: Begin \AtBeginDocument code.
+Package caption Info: End \AtBeginDocument code.
+LaTeX Font Info:    Font shape `T1/txr/b/n' in size <10> not available
+(Font)              Font shape `T1/txr/bx/n' tried instead on input line 70.
+LaTeX Font Info:    Trying to load font information for OT1+txr on input line 8
+8.
+
+(C:\Users\mazou\AppData\Local\Programs\MiKTeX\tex/latex/txfonts\ot1txr.fd
+File: ot1txr.fd 2000/12/15 v3.1
+)
+LaTeX Font Info:    Trying to load font information for U+txmia on input line 8
+8.
+
+(C:\Users\mazou\AppData\Local\Programs\MiKTeX\tex/latex/txfonts\utxmia.fd
+File: utxmia.fd 2000/12/15 v3.1
+)
+LaTeX Font Info:    Trying to load font information for U+msa on input line 88.
+
+
+(C:\Users\mazou\AppData\Local\Programs\MiKTeX\tex/latex/amsfonts\umsa.fd
+File: umsa.fd 2013/01/14 v3.01 AMS symbols A
+)
+LaTeX Font Info:    Trying to load font information for U+msb on input line 88.
+
+
+(C:\Users\mazou\AppData\Local\Programs\MiKTeX\tex/latex/amsfonts\umsb.fd
+File: umsb.fd 2013/01/14 v3.01 AMS symbols B
+)
+LaTeX Font Info:    Trying to load font information for U+txsyc on input line 8
+8.
+
+(C:\Users\mazou\AppData\Local\Programs\MiKTeX\tex/latex/txfonts\utxsyc.fd
+File: utxsyc.fd 2000/12/15 v3.1
+)
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `\<def>-command' on input line 116.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `\cnotenum' on input line 116.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `\<def>-command' on input line 116.
+
+
+Package hyperref Warning: Token not allowed in a PDF string (Unicode):
+(hyperref)                removing `\@corref' on input line 116.
+
+[1
+
+{C:/Users/mazou/AppData/Local/MiKTeX/fonts/map/pdftex/pdftex.map}{C:/Users/mazo
+u/AppData/Local/Programs/MiKTeX/fonts/enc/dvips/base/8r.enc}]
+LaTeX Font Info:    Trying to load font information for T1+cmtt on input line 1
+16.
+
+(C:\Users\mazou\AppData\Local\Programs\MiKTeX\tex/latex/base\t1cmtt.fd
+File: t1cmtt.fd 2023/04/13 v2.5m Standard LaTeX font definitions
+)
+(sections/01_introduction.tex
+LaTeX Font Info:    Trying to load font information for TS1+txr on input line 2
+7.
+
+(C:\Users\mazou\AppData\Local\Programs\MiKTeX\tex/latex/txfonts\ts1txr.fd
+File: ts1txr.fd 2000/12/15 v3.1
+)
+
+[2]
+
+[3]) (sections/02_related_work.tex
+
+[4]
+Overfull \hbox (3.09016pt too wide) in paragraph at lines 23--27
+\T1/txr/m/n/10 dependent hy-per-pa-ram-e-ter se-lec-tion (tar-get spac-ing, pat
+ch size, batch size, aug-men-ta-tion pipeline)
+ []
+
+
+Overfull \hbox (3.35014pt too wide) in paragraph at lines 69--90
+\T1/txr/m/n/10 dynamic-learning U-Nets that en-force tem-po-ral con-sis-tency a
+cross the car-diac cy-cle [[]], contour-
+ []
+
+
+
+[5]
+
+[6]) (sections/03_methods.tex
+
+[7] (tables/T0_archs.tex
+Overfull \hbox (43.12485pt too wide) in paragraph at lines 13--28
+ [][] 
+ []
+
+)
+Overfull \hbox (19.08548pt too wide) in paragraph at lines 79--81
+[]\T1/txr/m/n/10 Augmentation: hor-i-zon-tal flip, $\OMS/txsy/m/n/10 ^^F\OT1/tx
+r/m/n/10 10 []$ \T1/txr/m/n/10 ro-ta-tion, small elas-tic de-for-ma-tion, mild 
+bright-ness/contrast
+ []
+
+
+
+[8]
+
+[9]
+Overfull \hbox (3.4124pt too wide) in paragraph at lines 142--146
+ []\T1/txr/m/it/10 Efficiency..[] \T1/txr/m/n/10 Train-able pa-ram-e-ters, GFLO
+Ps at $\OT1/txr/m/n/10 256 \OMS/txsy/m/n/10 ^^B \OT1/txr/m/n/10 256$ \T1/txr/m/
+n/10 in-put (mea-sured with \T1/cmtt/m/n/10 fvcore \T1/txr/m/n/10 on CUDA),
+ []
+
+) (sections/04_results.tex
+
+[10] (tables/T1_main_dice.tex
+LaTeX Font Info:    Font shape `T1/txr/b/n' in size <8> not available
+(Font)              Font shape `T1/txr/bx/n' tried instead on input line 10.
+LaTeX Font Info:    Font shape `T1/txr/b/n' in size <9> not available
+(Font)              Font shape `T1/txr/bx/n' tried instead on input line 29.
+)
+
+[11] (tables/T8_iou.tex) (tables/T2_boundary.tex)
+
+[12] (tables/T3_edes.tex
+
+[13]) (tables/T4_ef.tex)
+
+[14]
+
+[15]
+
+[16] (tables/T5_quality.tex) (tables/T6_efficiency.tex)
+
+[17]
+<figures/fig_pareto.pdf, id=377, 413.57379pt x 295.14752pt>
+File: figures/fig_pareto.pdf Graphic file (type pdf)
+<use figures/fig_pareto.pdf>
+Package pdftex.def Info: figures/fig_pareto.pdf  used on input line 229.
+(pdftex.def)             Requested size: 353.2793pt x 252.12405pt.
+ (tables/T7_wilcoxon.tex)
+
+[18]
+
+[19 <./figures/fig_pareto.pdf>]
+<figures/fig_cd_diagram.pdf, id=448, 737.59697pt x 234.40373pt>
+File: figures/fig_cd_diagram.pdf Graphic file (type pdf)
+<use figures/fig_cd_diagram.pdf>
+Package pdftex.def Info: figures/fig_cd_diagram.pdf  used on input line 295.
+(pdftex.def)             Requested size: 364.79883pt x 115.92825pt.
+<figures/fig_qualitative.png, id=450, 629.4717pt x 1293.633pt>
+File: figures/fig_qualitative.png Graphic file (type png)
+<use figures/fig_qualitative.png>
+Package pdftex.def Info: figures/fig_qualitative.png  used on input line 314.
+(pdftex.def)             Requested size: 246.1173pt x 505.79657pt.
+
+
+LaTeX Warning: Float too large for page by 25.04655pt on input line 323.
+
+) (sections/05_discussion.tex
+
+[20]
+
+[21 <./figures/fig_cd_diagram.pdf>]
+
+[22 <./figures/fig_qualitative.png>]
+
+[23]
+
+[24]
+Overfull \hbox (8.95883pt too wide) in paragraph at lines 137--141
+[]\T1/txr/bx/n/10 Deep skip con-nec-tions \T1/txr/m/n/10 (ev-ery U-Net-shaped a
+r-chi-tec-ture ex-cept DeepLabV3+). DeepLabV3+'s
+ []
+
+
+
+[25]
+Overfull \hbox (10.5483pt too wide) in paragraph at lines 184--188
+[]\T1/txr/bx/n/10 Single-dataset. \T1/txr/m/n/10 All eval-u-a-tion is on CA-MUS
+. A cross-dataset trans-fer eval-u-a-tion (\T1/txr/m/it/10 e.g., \T1/txr/m/n/10
+ EchoNet-
+ []
+
+) (sections/06_conclusion.tex
+
+[26])
+Overfull \hbox (9.31015pt too wide) in paragraph at lines 46--128
+[]\T1/txr/m/n/10 We re-lease the com-plete train-ing, eval-u-a-tion, statistica
+l-analysis, and figure-generation pipeline,
+ []
+
+
+
+[27] (main.bbl
+
+[28]
+
+[29]
+
+[30]
+
+[31])
+
+[32] (main.aux)
+ ***********
+LaTeX2e <2024-06-01> patch level 2
+L3 programming layer <2024-08-16>
+ ***********
+Package rerunfilecheck Info: File `main.out' has not changed.
+(rerunfilecheck)             Checksum: 1F39DF1850751CD7E4B3FC96DDF04A24;5725.
+ ) 
 Here is how much of TeX's memory you used:
- 14409 strings out of 473899
- 222824 string characters out of 5726500
- 1925960 words of memory out of 5000000
- 37117 multiletter control sequences out of 15000+600000
- 560487 words of font info for 38 fonts, out of 8000000 for 9000
+ 15180 strings out of 473899
+ 237755 string characters out of 5726500
+ 1944960 words of memory out of 5000000
+ 37598 multiletter control sequences out of 15000+600000
+ 624197 words of font info for 148 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 75i,1n,79p,627b,96s stack positions out of 10000i,1000n,20000p,200000b,200000s
-!  ==> Fatal error occurred, no output PDF file produced!
+ 75i,12n,79p,902b,634s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ <C:\Users\mazou\AppData\Local\MiKTeX\fonts/pk/ljfour/jknappen/ec/dpi600\ectt
+1000.pk> <C:\Users\mazou\AppData\Local\MiKTeX\fonts/pk/ljfour/jknappen/ec/dpi60
+0\ectt0800.pk><C:/Users/mazou/AppData/Local/Programs/MiKTeX/fonts/type1/public/
+txfonts/rtcxr.pfb><C:/Users/mazou/AppData/Local/Programs/MiKTeX/fonts/type1/pub
+lic/txfonts/rtxb.pfb><C:/Users/mazou/AppData/Local/Programs/MiKTeX/fonts/type1/
+public/txfonts/rtxi.pfb><C:/Users/mazou/AppData/Local/Programs/MiKTeX/fonts/typ
+e1/public/txfonts/rtxmi.pfb><C:/Users/mazou/AppData/Local/Programs/MiKTeX/fonts
+/type1/public/txfonts/rtxr.pfb><C:/Users/mazou/AppData/Local/Programs/MiKTeX/fo
+nts/type1/public/txfonts/txex.pfb><C:/Users/mazou/AppData/Local/Programs/MiKTeX
+/fonts/type1/public/txfonts/txsy.pfb><C:/Users/mazou/AppData/Local/Programs/MiK
+TeX/fonts/type1/urw/times/utmb8a.pfb><C:/Users/mazou/AppData/Local/Programs/MiK
+TeX/fonts/type1/urw/times/utmr8a.pfb><C:/Users/mazou/AppData/Local/Programs/MiK
+TeX/fonts/type1/urw/times/utmri8a.pfb>
+Output written on main.pdf (32 pages, 4169500 bytes).
+PDF statistics:
+ 765 PDF objects out of 1000 (max. 8388607)
+ 159 named destinations out of 1000 (max. 500000)
+ 256 words of extra memory for PDF output out of 10000 (max. 10000000)
+

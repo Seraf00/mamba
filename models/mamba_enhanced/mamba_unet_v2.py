@@ -188,11 +188,20 @@ class MambaUNetV2(nn.Module):
         mamba_in_encoder: bool = True,
         mamba_in_skip: bool = True,
         use_multiscale_bottleneck: bool = True,
+        mamba_in_bottleneck: bool = True,
         deep_supervision: bool = False,
         d_state: int = 16
     ):
         super().__init__()
-        
+
+        # Which SSM positions this instance carries; persisted by the trainer
+        # so the ablation table is generated from the checkpoint, not the name.
+        self.mamba_positions = tuple(
+            p for p, on in (('encoder', mamba_in_encoder),
+                            ('skip', mamba_in_skip),
+                            ('bottleneck', mamba_in_bottleneck)) if on)
+        self.mamba_in_bottleneck = mamba_in_bottleneck
+
         self.in_channels = in_channels
         self.num_classes = num_classes
         self.depth = depth
@@ -218,19 +227,20 @@ class MambaUNetV2(nn.Module):
             )
         
         # Multi-scale Mamba bottleneck
-        if use_multiscale_bottleneck:
-            self.bottleneck = MultiscaleMambaBottleneck(
-                dim=features[-1],
-                mamba_type=mamba_type,
-                scales=[1, 2, 4],
-                d_state=d_state
-            )
-        else:
-            self.bottleneck = MambaBottleneck(
-                dim=features[-1],
-                mamba_type=mamba_type,
-                d_state=d_state
-            )
+        if mamba_in_bottleneck:
+            if use_multiscale_bottleneck:
+                self.bottleneck = MultiscaleMambaBottleneck(
+                    dim=features[-1],
+                    mamba_type=mamba_type,
+                    scales=[1, 2, 4],
+                    d_state=d_state
+                )
+            else:
+                self.bottleneck = MambaBottleneck(
+                    dim=features[-1],
+                    mamba_type=mamba_type,
+                    d_state=d_state
+                )
         
         # Decoder
         self.decoders = nn.ModuleList()
@@ -294,7 +304,8 @@ class MambaUNetV2(nn.Module):
             skips.append(enc)
         
         # Bottleneck
-        enc = self.bottleneck(enc)
+        if self.mamba_in_bottleneck:
+            enc = self.bottleneck(enc)
         
         # Remove bottleneck from skips
         skips = skips[:-1]

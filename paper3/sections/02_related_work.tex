@@ -1,0 +1,66 @@
+\section{Related work}
+\label{sec:related}
+
+\subsection{Segmentation on CAMUS}
+
+CAMUS~\cite{leclerc2019camus} provides apical two- and four-chamber views for
+500 patients with expert delineations of the LV endocardium, LV myocardium and
+left atrium at end-diastole (ED) and end-systole (ES), together with an official
+patient-level split. The original study established that a plain U-Net trained
+on a sufficiently large annotated set outperforms classical methods and lands,
+on average, below inter-observer variability though above intra-observer
+variability.
+
+Subsequent work has largely followed the encoder--decoder line:
+nnU-Net's self-configuring pipeline~\cite{isensee2021nnunet}, transformer
+hybrids such as TransUNet~\cite{chen2021transunet} and
+Swin-UNet~\cite{cao2022swinunet}, and more recently state-space and
+Kolmogorov--Arnold variants. Reported mean Dice on this benchmark now clusters
+between $0.90$ and $0.95$. Two observations motivate the present study. First,
+that band straddles the $0.899$ inter-observer figure reported by the dataset's
+own authors, so differences within it are difficult to interpret as anatomical
+accuracy. Second, comparisons across papers are frequently not like-for-like:
+protocols differ in the split used, in whether boundary metrics are computed on
+a resampled grid or at native resolution, and in the hardware on which latency
+is measured.
+
+\subsection{Anatomically constrained and boundary-aware segmentation}
+
+Because overlap saturates, several lines of work target the boundary or the
+shape prior directly. Post-hoc anatomical correction enforces topological
+validity on network outputs without retraining. Contour-based and
+curve-deforming formulations regress vertex positions rather than dense masks.
+Boundary-weighted and distance-transform losses reweight the objective toward
+the contour. We test the last of these directly (Sec.~\ref{sec:results}) and
+find it does not help on this benchmark, which we attribute to the contour being
+precisely where the reference labels are least reliable.
+
+\subsection{Real-time instance segmentation}
+
+Detector-based instance segmentation descends from Mask
+R-CNN~\cite{he2017maskrcnn} and, for the real-time branch, from YOLACT's
+prototype-mask formulation~\cite{bolya2019yolact}: the network predicts a small
+basis of mask prototypes plus per-instance coefficients and composes them at a
+fraction of the input resolution. The YOLO family~\cite{redmon2016yolo} carries
+this head in its modern versions and is designed for the latency regime that
+bedside echocardiography requires.
+
+The formulation carries an assumption that does not hold for cardiac anatomy:
+an instance is a single closed polygon. Nested and annular structures --- of
+which the myocardium is the canonical medical example --- have no such
+representation. To our knowledge this obstacle has not been examined on CAMUS,
+and detector-based segmentation has not been placed on the same measurement
+footing as the semantic-segmentation literature.
+
+\subsection{Reproducibility and evaluation practice}
+
+A recurring finding in empirical machine learning is that reported improvements
+frequently fall within the variance induced by random seeds, and that
+comparisons are sensitive to evaluation details that papers do not always
+specify. Medical imaging inherits this problem with an additional complication:
+test sets are small --- 50 patients here --- so paired significance tests over
+a few hundred frames are powerful enough to certify differences that a repeat
+run would erase. Our measurement of the seed floor (Sec.~\ref{sec:noise})
+quantifies this for CAMUS specifically, and our audit of the reference EF
+implementation (Sec.~\ref{sec:ef}) shows that an evaluation fault can survive in
+widely used released code precisely because it is invisible on ground truth.

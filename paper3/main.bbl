@@ -1,0 +1,42 @@
+\begin{thebibliography}{1}
+\expandafter\ifx\csname url\endcsname\relax
+  \def\url#1{\texttt{#1}}\fi
+\expandafter\ifx\csname urlprefix\endcsname\relax\def\urlprefix{URL }\fi
+\expandafter\ifx\csname href\endcsname\relax
+  \def\href#1#2{#2} \def\path#1{#1}\fi
+
+\bibitem{leclerc2019camus}
+S.~Leclerc, E.~Smistad, J.~Pedrosa, et~al., Deep learning for segmentation
+  using an open large-scale dataset in 2d echocardiography, IEEE Transactions
+  on Medical Imaging 38~(9) (2019) 2198--2210.
+
+\bibitem{ronneberger2015unet}
+O.~Ronneberger, P.~Fischer, T.~Brox, U-net: Convolutional networks for
+  biomedical image segmentation, in: Proc. MICCAI, 2015, pp. 234--241.
+
+\bibitem{isensee2021nnunet}
+F.~Isensee, P.~F. Jaeger, S.~A.~A. Kohl, J.~Petersen, K.~H. Maier-Hein,
+  nnu-net: A self-configuring method for deep learning-based biomedical image
+  segmentation, Nature Methods 18~(2) (2021) 203--211.
+
+\bibitem{chen2021transunet}
+J.~Chen, Y.~Lu, Q.~Yu, et~al., Transunet: Transformers make strong encoders for
+  medical image segmentation, arXiv preprint arXiv:2102.04306 (2021).
+
+\bibitem{cao2022swinunet}
+H.~Cao, Y.~Wang, J.~Chen, et~al., Swin-unet: Unet-like pure transformer for
+  medical image segmentation, in: Proc. ECCV Workshops, 2022, pp. 205--218.
+
+\bibitem{he2017maskrcnn}
+K.~He, G.~Gkioxari, P.~Doll{\'a}r, R.~Girshick, Mask r-cnn, in: Proc. ICCV,
+  2017, pp. 2961--2969.
+
+\bibitem{bolya2019yolact}
+D.~Bolya, C.~Zhou, F.~Xiao, Y.~J. Lee, Yolact: Real-time instance segmentation,
+  in: Proc. ICCV, 2019, pp. 9157--9166.
+
+\bibitem{redmon2016yolo}
+J.~Redmon, S.~Divvala, R.~Girshick, A.~Farhadi, You only look once: Unified,
+  real-time object detection, in: Proc. CVPR, 2016, pp. 779--788.
+
+\end{thebibliography}

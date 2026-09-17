@@ -1,0 +1,25 @@
+\section{Conclusion}
+
+We asked how close a real-time instance detector gets to encoder--decoder
+networks on multi-structure echocardiography, and what stands in the way. The
+apparent obstacle is representational: the CAMUS myocardium is an annulus and a
+YOLO mask is a polygon. Encoding the epicardium as a filled contour and
+recovering the myocardium by subtraction resolves it at a cost of one pixel of
+Hausdorff distance.
+
+The obstacle then turns out not to be one. Neither the encoding nor the vertex
+budget produces a measurable difference, and neither does scale, resolution,
+mask-prototype resolution, augmentation recipe, training-set size or a
+boundary-weighted loss. Read against a measured seed floor of $0.134$\,mm, a
+stock YOLO26n-seg at 640\,px matches or exceeds nine tuned baselines at 2.7\,M
+parameters and runs at near-constant cost across input resolutions where
+encoder--decoders scale with pixel count.
+
+Two findings generalise beyond this architecture. Mean Dice on CAMUS has
+saturated at the level of annotator disagreement, so boundary distance in
+millimetres is what discriminates methods. And a paired test over the 200-frame
+test set certifies pure seed variation as significant, so single-seed ablations
+on this benchmark produce false positives.
+
+Because in-distribution accuracy appears annotation-bound, the open question is
+generalisation across scanners and centres rather than further gains here.

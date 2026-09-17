@@ -1,0 +1,26 @@
+%============================================================================
+% Y1 -- YOLO vs semantic-segmentation baselines (auto-generated)
+%============================================================================
+\begin{table*}[t]
+\centering
+\caption{CAMUS official test split (50 patients). Dice on the $256\times256$ grid, HD95 at native resolution in mm. The detector row is the mean over three seeds, not the best of them. Best per column in \textbf{bold}. Markers: Holm-corrected paired Wilcoxon over patients against that mean, $^{*}$ $p<0.05$, $^{\dagger}$ not significant.}
+\label{tab:main}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{l l c c c}
+\toprule
+Model & Paradigm & Dice & HD95 (mm) & Params (M) \\
+\midrule
+TransUNet$^{\dagger}$      & Hybrid      & \textbf{0.9121} & 4.08 & 102.1 \\
+YOLO26-seg (ours, mean of 3 seeds) & Detector    & 0.9113 & \textbf{3.81} & 2.7 \\
+nnU-Net$^{\dagger}$        & CNN         & 0.9099 & 4.27 & 15.6 \\
+UNet-V1$^{\dagger}$        & CNN         & 0.9085 & 4.62 & 31.0 \\
+UNet-ResNet$^{\dagger}$    & CNN         & 0.9081 & 4.26 & 29.1 \\
+UNet-V2$^{*}$              & CNN         & 0.8963 & 5.29 & 33.0 \\
+Swin-UNet$^{*}$            & Transformer & 0.8882 & 5.08 & 41.8 \\
+DeepLabV3+$^{*}$           & CNN         & 0.8602 & 5.71 & 40.3 \\
+FPN-UNet$^{*}$             & CNN         & 0.8596 & 6.21 & 32.2 \\
+DenseContextU-Net$^{*}$    & CNN         & 0.8505 & 8.29 & 2.2 \\
+\bottomrule
+\end{tabular}
+\end{table*}

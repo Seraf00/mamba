@@ -1,0 +1,26 @@
+\begin{table}[t]
+\centering
+\caption{Latency under a single protocol: batch 1, CUDA-synchronised, median of 50 iterations after 10 warm-up, on one RTX~4060 Laptop GPU. Every model is timed at both resolutions so that input size is separated from architecture; no accuracy is claimed at the off-design size. Swin-UNet is shape-constrained and is timed at 224/448.}
+\label{tab:latency}
+\small
+\begin{tabular}{lrrr}
+\toprule
+Model & @256\,px & @640\,px & ratio \\
+\midrule
+\textbf{YOLO26n-seg} & 15.69 & 15.53 & 1.0$\times$ \\
+UNet-ResNet & 5.75 & 23.50 & 4.1$\times$ \\
+Swin-UNet & 17.45 & 38.48 & 2.2$\times$ \\
+DeepLabV3+ & 16.90 & 39.76 & 2.4$\times$ \\
+nnU-Net & 10.68 & 78.45 & 7.3$\times$ \\
+UNet-V1 & 17.72 & 119.32 & 6.7$\times$ \\
+UNet-V2 & 21.43 & 153.66 & 7.2$\times$ \\
+FPN-UNet & 58.40 & 364.15 & 6.2$\times$ \\
+DenseCtx-UNet & 196.71 & 50163.17 & 255.0$\times$ \\
+\midrule
+\multicolumn{4}{l}{\textit{YOLO26n-seg, deployment paths}} \\
+\quad end-to-end @640 & & 11.75 & \\
+\quad FP16 @640 & & 16.69 & \\
+\quad ONNX Runtime @640 & & 23.53 & \\
+\bottomrule
+\end{tabular}
+\end{table}

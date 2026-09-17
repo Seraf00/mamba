@@ -3,9 +3,18 @@
 %==============================================================================
 \begin{table*}[t]
 \centering
-\caption{Pairwise Wilcoxon signed-rank test on per-sample mean Dice,
+\caption{Pairwise Wilcoxon signed-rank test on mean Dice,
 Bonferroni-corrected over $\binom{9}{2} = 36$ pairs. ``NS'' marks
-pairs not significantly different at $p < 0.05$ after correction.}
+pairs not significantly different at $p < 0.05$ after correction.
+Tests are computed over the $50$ \emph{patients}, not the $200$ frames:
+the frames are two views and two phases of each patient and are not
+independent, so testing over them would inflate the sample fourfold.
+On this table the correction changes no conclusion --- 27 of
+36 pairs reach significance at frame level and 27 at
+patient level, with 0 pairs differing --- because the surviving
+differences are far larger than the extra power the wrong unit would buy.
+We report the patient-level test because it is the correct estimand, not
+because it alters the outcome.}
 \label{tab:wilcoxon}
 \small
 \setlength{\tabcolsep}{3pt}
@@ -14,14 +23,14 @@ pairs not significantly different at $p < 0.05$ after correction.}
 \toprule
  & UNet-V1 & UNet-V2 & UNet-ResNet & DeepLabV3+ & nnU-Net & DenseContextU-Net & FPN-UNet & Swin-UNet & TransUNet \\
 \midrule
-UNet-V1 & --- & 2e-13 & NS & 6e-28 & NS & 4e-31 & 2e-30 & 5e-20 & NS \\
-UNet-V2 &  & --- & 7e-09 & 4e-16 & 2e-13 & 4e-26 & 7e-21 & 3e-03 & 8e-13 \\
-UNet-ResNet &  &  & --- & 2e-26 & NS & 1e-28 & 1e-29 & 9e-17 & NS \\
-DeepLabV3+ &  &  &  & --- & 3e-28 & NS & NS & 2e-10 & 3e-28 \\
-nnU-Net &  &  &  &  & --- & 6e-32 & 5e-31 & 9e-22 & NS \\
-DenseContextU-Net &  &  &  &  &  & --- & NS & 4e-22 & 4e-30 \\
-FPN-UNet &  &  &  &  &  &  & --- & 3e-17 & 5e-30 \\
-Swin-UNet &  &  &  &  &  &  &  & --- & 6e-21 \\
+UNet-V1 & --- & 7e-07 & NS & 3e-13 & NS & 6e-14 & 4e-13 & 2e-10 & NS \\
+UNet-V2 &  & --- & 1e-05 & 1e-07 & 3e-07 & 7e-12 & 2e-09 & 4e-02 & 2e-07 \\
+UNet-ResNet &  &  & --- & 2e-12 & NS & 6e-10 & 2e-13 & 4e-08 & NS \\
+DeepLabV3+ &  &  &  & --- & 6e-13 & NS & NS & 2e-05 & 9e-13 \\
+nnU-Net &  &  &  &  & --- & 1e-13 & 1e-13 & 1e-11 & NS \\
+DenseContextU-Net &  &  &  &  &  & --- & NS & 6e-10 & 2e-13 \\
+FPN-UNet &  &  &  &  &  &  & --- & 7e-08 & 6e-13 \\
+Swin-UNet &  &  &  &  &  &  &  & --- & 7e-12 \\
 TransUNet &  &  &  &  &  &  &  &  & --- \\
 \bottomrule
 \end{tabular}}

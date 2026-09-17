@@ -1,0 +1,170 @@
+\section{Materials and methods}
+\label{sec:methods}
+
+\subsection{Dataset and splits}
+
+CAMUS~\cite{leclerc2019camus} contains apical two-chamber (2CH) and
+four-chamber (4CH) views for 500 patients, annotated at ED and ES for three
+structures: LV endocardium ($\ell{=}1$), LV myocardium ($\ell{=}2$) and left
+atrium ($\ell{=}3$). We use the official 400/50/50 patient-level split. We
+verified it byte-identical to the \texttt{subgroup\_training},
+\texttt{subgroup\_validation} and \texttt{subgroup\_testing} lists released with
+the dataset, so results here are directly comparable with published work that
+uses the official protocol. This yields $400\times2\times2 = 1600$ training and
+$200$ test frames.
+
+Each patient additionally carries a fully annotated half cardiac cycle. Exported
+at every annotated frame this gives $17{,}006$ training images, used in
+Sec.~\ref{sec:results} as a data-scaling factor. We confirmed that no test or
+validation patient appears in that expansion.
+
+Images are exported at native resolution with per-image min--max normalisation.
+No resampling to a common grid occurs at any stage of dataset construction, so
+the pixel spacing recorded in the NIfTI header --- typically $0.308$\,mm ---
+remains valid for boundary metrics.
+
+\subsection{The annulus problem}
+\label{sec:encoding}
+
+The myocardium is the ring between the endocardial and epicardial contours: an
+annulus, and therefore not representable as the single closed polygon that an
+instance-segmentation label must be. Two encodings exist.
+
+\paragraph{Filled-contour decomposition} We define the second trained class as
+the \emph{epicardial disc}, $\ell \in \{1,2\}$, which is simply connected. All
+three trained classes are then blob-shaped and the mask head never has to
+represent a hole. At inference the CAMUS label map is recomposed by painting the
+predicted disc as myocardium and overwriting its interior with the predicted
+endocardium,
+\begin{equation}
+\hat{M}_{\text{myo}} \;=\; \hat{M}_{\text{epi}} \setminus \hat{M}_{\text{endo}},
+\label{eq:decomp}
+\end{equation}
+so the hole emerges from the interaction of two predictions rather than from a
+single mask.
+
+\paragraph{Seam-cut annulus} Alternatively the ring is written as one polygon
+that traverses the outer contour, crosses to the inner contour along a
+zero-width seam, traverses it in the opposite winding, and returns. Scan-line
+filling honours this and yields a genuine annulus; we verified that the
+rasterisation routine used to build training targets reproduces the ring at
+$0.994$ Dice, and not the filled disc ($0.49$--$0.79$).
+
+We note that a third apparent option --- taking only the \emph{outer} contour of
+the ring --- is not a distinct encoding. The outer boundary of the myocardial
+ring \emph{is} the epicardial contour, making it identical to the filled
+decomposition.
+
+\subsection{Encoding ceiling}
+\label{sec:ceiling}
+
+Both encodings are lossy at a finite vertex budget, so we measure their ceiling
+directly rather than assume it is negligible. Ground-truth label maps are
+converted to polygons exactly as the training targets are, rasterised back, and
+scored against the untouched native ground truth. This bounds any model trained
+on that representation. We report two quantities: the Dice of the recomposed
+four-class map, which is what evaluation ultimately sees, and the Dice of the
+raw second-class target, which is what the mask head is asked to reproduce. The
+second is the discriminating one, because Eq.~\ref{eq:decomp} re-carves the hole
+under either encoding and therefore conceals the difference.
+
+\subsection{Evaluation protocol}
+\label{sec:protocol}
+
+To keep our numbers comparable with the baselines evaluated on this split we
+reproduce their protocol rather than improve on it:
+
+\begin{itemize}
+\item Overlap metrics (Dice, IoU) are computed per frame and per class on a
+      $256\times256$ grid with a smoothing constant of $10^{-6}$.
+\item Boundary metrics (HD95, ASSD) are computed at \emph{native} resolution
+      using each patient's true pixel spacing, and are reported in millimetres.
+      Computing them on a resampled grid while retaining the native spacing
+      under-reports distances by the resampling factor.
+\item Predicted instance masks are resampled to native resolution by nearest
+      neighbour before scoring; for each class the single highest-confidence
+      instance is kept.
+\end{itemize}
+
+We verified this reimplementation against the reference metric code on perturbed
+ground truth: HD95 agrees to $2\times10^{-12}$\,mm and ASSD exactly. Our
+implementation streams the pairwise boundary-distance computation in chunks
+rather than materialising the full distance matrix, which keeps
+native-resolution evaluation within the memory budget of the same laptop.
+
+\subsection{Latency protocol}
+\label{sec:latency-protocol}
+
+Published latencies for the baselines were measured on other hardware and cannot
+be mixed with ours. We therefore re-time every model under a single protocol:
+batch size 1, CUDA-synchronised around each iteration, ten warm-up iterations
+discarded, median of fifty timed iterations reported (the median rather than the
+mean, because scheduler noise on a laptop skews the latter).
+
+Three quantities are separated, because input resolution, architecture and
+framework overhead are otherwise confounded. \emph{Raw forward} is the bare
+module forward pass with no pre- or post-processing, measured for every model at
+both $256$ and $640$\,px so that resolution is isolated from architecture; this
+requires no retraining and no accuracy is claimed at the off-design size.
+\emph{End-to-end} is the full inference call including letterboxing and
+native-resolution mask assembly. \emph{ONNX} is the exported graph under ONNX
+Runtime's CUDA provider.
+
+\subsection{Ejection fraction}
+\label{sec:ef-method}
+
+EF is defined across the pair of cardiac phases,
+$\text{EF} = (\text{EDV}-\text{ESV})/\text{EDV}$, and therefore requires pairing
+each patient's ED and ES predictions in both views. Volumes are computed with
+Simpson's biplane method of disks using the official CAMUS implementation, at
+native resolution with each view's true spacing. We verified our copy of that
+code bit-identical to the reference notebook published with the dataset: across
+all 50 test patients the maximum absolute difference in both EDV and EF is
+$0.0000$.
+
+We additionally compute an \emph{oracle}: EF derived from the ground-truth masks
+through the identical pipeline. This separates the error contributed by
+segmentation from the irreducible gap between mask-derived EF and the clinically
+recorded value, and it is the reference point against which model EF should be
+read.
+
+\subsection{Training configuration}
+
+Unless stated otherwise we train YOLO26n-seg initialised from COCO weights at
+$640$\,px, batch 8, for 100 epochs with early stopping (patience 30), on a
+single NVIDIA RTX~4060 Laptop GPU (8\,GB). YOLO26 is the newest generation with
+published segmentation weights and is end-to-end: it predicts a fixed instance
+set with no non-maximum suppression, which removes a data-dependent stage from
+the latency budget.
+
+We use the framework's automatic optimiser selection, which for this workload
+chooses MuSGD at a learning rate of $0.01$. We note explicitly that this setting
+\emph{overrides} any user-specified learning rate; learning rate is therefore
+varied only in the dedicated arm of Sec.~\ref{sec:results}, and readers
+reproducing this work should be aware that the corresponding flag is otherwise
+inert.
+
+Several components of the stock augmentation recipe have no anatomical
+justification on sector ultrasound: mosaic composites sectors into images that
+cannot physically occur, horizontal flipping violates the left/right convention
+of an apical view, and hue and saturation jitter are meaningless on grayscale
+input. We therefore adopt an echo-aware default --- mosaic, mixup, copy-paste
+and flips disabled; mild rotation ($\pm10^\circ$), translation, scaling and
+brightness jitter retained. We stress that this recipe is chosen on principle
+and on cost, not because it measures better: Sec.~\ref{sec:results} shows it is
+statistically indistinguishable from the stock recipe.
+
+\subsection{Experimental design}
+
+The plan is declared in a single machine-readable file and executed by a
+resumable runner that builds each derived dataset on demand, trains, evaluates
+on the held-out split, and appends to a summary table. Configurations are hashed
+after defaults are applied, so a configuration shared between factors is trained
+once and reused. Every number reported here is regenerated from the run
+artefacts by a single script.
+
+Training is deterministic: two independent trainings of one configuration, in
+separate processes thirty hours apart, produced per-frame Dice identical to
+machine precision. The variance reported in Sec.~\ref{sec:noise} is therefore
+attributable to seed choice alone, not to nondeterministic kernels or data
+ordering.

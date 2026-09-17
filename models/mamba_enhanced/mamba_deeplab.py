@@ -81,10 +81,12 @@ class MambaASPP(nn.Module):
         out_channels: int = 256,
         atrous_rates: Tuple[int, ...] = (6, 12, 18),
         mamba_type: str = 'vmamba',
-        d_state: int = 16
+        d_state: int = 16,
+        use_mamba: bool = True
     ):
         super().__init__()
-        
+
+        self.use_mamba = use_mamba
         modules = []
         
         # 1x1 convolution
@@ -101,22 +103,25 @@ class MambaASPP(nn.Module):
         # Global pooling
         modules.append(ASPPPooling(in_channels, out_channels))
         
-        # Mamba branch for global context
-        self.mamba_branch = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
-        )
-        self.mamba = create_mamba_block(
-            variant=mamba_type,
-            dim=out_channels,
-            d_state=d_state
-        )
-        
+        # Mamba branch for global context. Dropped entirely when the
+        # bottleneck position is ablated, which also removes one input to the
+        # projection -- hence the branch count below is conditional too.
+        if use_mamba:
+            self.mamba_branch = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(inplace=True)
+            )
+            self.mamba = create_mamba_block(
+                variant=mamba_type,
+                dim=out_channels,
+                d_state=d_state
+            )
+
         self.convs = nn.ModuleList(modules)
-        
-        # Project concatenated features (6 branches: 1x1 + 3 dilated + pool + mamba)
-        num_branches = len(atrous_rates) + 3  # 1x1, dilated, pool, mamba
+
+        # Project concatenated features: 1x1 + dilated + pool (+ mamba)
+        num_branches = len(atrous_rates) + 2 + (1 if use_mamba else 0)
         self.project = nn.Sequential(
             nn.Conv2d(out_channels * num_branches, out_channels, 
                       kernel_size=1, bias=False),
@@ -133,9 +138,10 @@ class MambaASPP(nn.Module):
             features.append(conv(x))
         
         # Mamba branch
-        mamba_feat = self.mamba_branch(x)
-        mamba_feat = self.mamba(mamba_feat)
-        features.append(mamba_feat)
+        if self.use_mamba:
+            mamba_feat = self.mamba_branch(x)
+            mamba_feat = self.mamba(mamba_feat)
+            features.append(mamba_feat)
         
         features = torch.cat(features, dim=1)
         return self.project(features)
@@ -162,14 +168,19 @@ class MambaDeepLabHead(nn.Module):
         aspp_channels: int = 256,
         atrous_rates: Tuple[int, ...] = (6, 12, 18),
         mamba_type: str = 'vmamba',
-        d_state: int = 16
+        d_state: int = 16,
+        mamba_in_bottleneck: bool = True,
+        mamba_in_decoder: bool = True
     ):
         super().__init__()
+
+        self.mamba_in_decoder = mamba_in_decoder
         
         # Mamba-enhanced ASPP
         self.aspp = MambaASPP(
             in_channels, aspp_channels, atrous_rates,
-            mamba_type=mamba_type, d_state=d_state
+            mamba_type=mamba_type, d_state=d_state,
+            use_mamba=mamba_in_bottleneck
         )
         
         # Low-level feature processing
@@ -180,11 +191,12 @@ class MambaDeepLabHead(nn.Module):
         )
         
         # Mamba for decoder fusion
-        self.decoder_mamba = create_mamba_block(
-            variant=mamba_type,
-            dim=aspp_channels + 48,
-            d_state=d_state
-        )
+        if mamba_in_decoder:
+            self.decoder_mamba = create_mamba_block(
+                variant=mamba_type,
+                dim=aspp_channels + 48,
+                d_state=d_state
+            )
         
         # Decoder
         self.decoder = nn.Sequential(
@@ -217,7 +229,8 @@ class MambaDeepLabHead(nn.Module):
         x = torch.cat([x, low_level], dim=1)
         
         # Mamba enhancement
-        x = x + self.decoder_mamba(x)
+        if self.mamba_in_decoder:
+            x = x + self.decoder_mamba(x)
         
         # Decode
         x = self.decoder(x)
@@ -252,10 +265,18 @@ class MambaDeepLab(nn.Module):
         pretrained: bool = True,
         output_stride: Literal[8, 16] = 16,
         mamba_type: Literal['mamba', 'mamba2', 'vmamba'] = 'vmamba',
-        d_state: int = 16
+        d_state: int = 16,
+        mamba_in_bottleneck: bool = True,
+        mamba_in_decoder: bool = True
     ):
         super().__init__()
-        
+
+        # Which SSM positions this instance actually carries. Recorded so the
+        # trainer can persist it and the ablation table can be generated from
+        # the checkpoints rather than from the run name.
+        self.mamba_positions = tuple(
+            p for p, on in (('bottleneck', mamba_in_bottleneck),
+                            ('decoder', mamba_in_decoder)) if on)
         self.in_channels = in_channels
         self.num_classes = num_classes
         self.output_stride = output_stride
@@ -315,7 +336,9 @@ class MambaDeepLab(nn.Module):
             aspp_channels=256,
             atrous_rates=atrous_rates,
             mamba_type=mamba_type,
-            d_state=d_state
+            d_state=d_state,
+            mamba_in_bottleneck=mamba_in_bottleneck,
+            mamba_in_decoder=mamba_in_decoder
         )
         
         self._init_head_weights()

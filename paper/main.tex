@@ -87,12 +87,13 @@ Bonferroni-corrected Wilcoxon tests.
 Two findings stand out. First, boundary accuracy has saturated: the best
 architecture reaches HD95 $= 4.08$~mm against a published CAMUS baseline
 of $\approx 4.3$~mm, and the three best architectures lie within $0.2$~mm of
-one another, well inside training variance. Clinical agreement, by
-contrast, improves substantially --- nnU-Net attains EF MAE $= 5.52\%$
-($r = 0.828$) against the $\sim$$9\%$ originally reported, using
-$6.5\times$ fewer parameters than the best-Dice model. Protocol
-modernisation therefore buys clinical agreement rather than contour
-precision.
+one another, well inside training variance. Clinical agreement is bounded by the
+measurement rather than by the network: applying the official CAMUS biplane
+pipeline to the ground-truth masks gives EF MAE $= 5.44\%$, and the best
+architecture reaches $6.62\%$. Segmentation therefore contributes about
+$1.2$ points of EF error on top of a $5.4$-point floor that no model can
+cross, and the spread across all nine architectures is $4.0$ points. Neither
+axis leaves much headroom for architectural change.
 %
 Second, we identify a reporting error that makes cross-paper boundary
 comparison unreliable. Computing Hausdorff distances on the network's
@@ -133,7 +134,7 @@ The CAMUS dataset is publicly available from
 \url{https://www.creatis.insa-lyon.fr/Challenge/camus/}. Training,
 evaluation, and analysis code; trained model checkpoints; and all
 intermediate JSON / CSV outputs supporting this paper are released at
-\url{https://github.com/Seraf00/mamba}.
+\url{https://github.com/Seraf00/mamba/tree/main/benchmark}.
 
 \section*{Acknowledgements}
 The authors thank the CAMUS challenge organisers (CREATIS, INSA Lyon) for

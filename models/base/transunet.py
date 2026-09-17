@@ -507,6 +507,15 @@ class TransUNet(nn.Module):
         nn.MultiheadAttention's in_proj_weight/in_proj_bias format.
 
         Skips: patch_embed, pos_embed, cls_token (different structure in our code).
+
+        Depth widening (``vit_layers > 12``) is supported: the first 12 blocks
+        take ViT-B/16's weights and the remainder stay randomly initialised.
+        That is what makes a parameter-matched control for TransUNet honest --
+        the Mamba variant is likewise a pretrained backbone plus freshly
+        initialised sequence-modelling blocks, so the control adds capacity the
+        same way rather than also forfeiting pretraining. Width widening
+        (``vit_dim``/``vit_heads``) cannot preserve the weights at all, so it is
+        refused here rather than silently producing an untrained transformer.
         """
         try:
             import timm
@@ -515,6 +524,19 @@ class TransUNet(nn.Module):
                 "[TransUNet] WARNING: timm is not installed. "
                 "Pretrained ViT-B/16 weights will NOT be loaded. "
                 "Install with: pip install timm"
+            )
+            return
+
+        # ViT-B/16 is 768-dim with 12 heads. Any other geometry makes every
+        # block tensor the wrong shape, and load_state_dict raises on a size
+        # mismatch even with strict=False -- so say so and keep the random init
+        # rather than crashing halfway through construction.
+        if self.transformer.embed_dim != 768:
+            print(
+                f"[TransUNet] vit_dim={self.transformer.embed_dim} != 768: "
+                "ViT-B/16 weights do not fit this geometry, so the transformer "
+                "stays randomly initialised. Use vit_layers to widen if you "
+                "need to keep pretraining."
             )
             return
 
@@ -528,8 +550,13 @@ class TransUNet(nn.Module):
         mapped = {}
 
         num_layers = len(self.transformer.layers)
+        # ViT-B/16 has 12 blocks. A deeper stack loads what exists and leaves
+        # the rest fresh; a shallower one loads only as many as it has.
+        n_available = len({k.split('.')[1] for k in timm_state
+                           if k.startswith('blocks.')})
+        n_load = min(num_layers, n_available)
 
-        for i in range(num_layers):
+        for i in range(n_load):
             prefix_timm = f'blocks.{i}.'
             prefix_ours = f'layers.{i}.'
 
@@ -571,9 +598,17 @@ class TransUNet(nn.Module):
         missing = load_result.missing_keys
         unexpected = load_result.unexpected_keys
 
-        print(f"[TransUNet] Loaded {loaded_count} weight tensors from pretrained ViT-B/16.")
+        print(f"[TransUNet] Loaded {loaded_count} weight tensors from pretrained ViT-B/16 "
+              f"({n_load} of {num_layers} blocks).")
+        if num_layers > n_load:
+            print(f"[TransUNet]   Blocks {n_load}-{num_layers - 1} are randomly "
+                  f"initialised (depth-widened control).")
         if missing:
-            print(f"[TransUNet]   Missing keys (expected, not in pretrained): {missing}")
+            # A depth-widened stack makes this list hundreds of entries long and
+            # every one of them is expected, so summarise past a handful.
+            shown = missing if len(missing) <= 8 else missing[:8] + [
+                f'... and {len(missing) - 8} more']
+            print(f"[TransUNet]   Missing keys (expected, not in pretrained): {shown}")
         if unexpected:
             print(f"[TransUNet]   Unexpected keys: {unexpected}")
 

@@ -5,18 +5,23 @@
 \subsection{Which architectural family wins on CAMUS?}
 \label{sec:disc-families}
 
-The top tier of our benchmark is mixed across paradigms: a hybrid
-CNN--Transformer (TransUNet) leads on bulk Dice and HD95, but a pure CNN
-(nnU-Net) leads on EF MAE \emph{and} on parameter efficiency. The
-difference between them on mean Dice is $0.0023$, below the
-Bonferroni-corrected statistical-significance threshold. A practitioner
-choosing between these two architectures should be guided not by Dice
-but by deployment constraints (nnU-Net needs $6.5\times$ fewer parameters
-and is faster) or by the clinical objective (nnU-Net is more accurate at
-EF and tighter at Bland--Altman bias).
+The top tier of our benchmark is mixed across paradigms, and no single
+architecture wins on every axis. The hybrid CNN--Transformer TransUNet leads on
+bulk Dice and HD95 and holds the highest EF correlation; the pure CNN UNet-V1
+attains the lowest EF MAE ($6.62\%$) and the tightest Bland--Altman bias
+($-0.42\%$); and nnU-Net leads on parameter efficiency while sitting mid-table
+on EF at $8.32\%$. The difference between TransUNet and nnU-Net on mean Dice is
+$0.0023$, below the Bonferroni-corrected significance threshold.
+
+A practitioner choosing among them should therefore be guided not by Dice but
+by the axis they actually care about: deployment constraints favour nnU-Net at
+$6.5\times$ fewer parameters, clinical EF agreement favours UNet-V1, and
+contour precision favours TransUNet. That these three come apart is itself the
+finding --- a single leaderboard column would have concealed it.
 
 The pure-Transformer family (Swin-UNet) is competitive on bulk Dice
-($0.8882$) but visibly worse on EF (MAE $10.46\%$, $r = 0.574$). This
+($0.8882$) but visibly worse on EF (MAE $9.44\%$, $r = 0.640$ --- the lowest
+correlation of any architecture in the benchmark). This
 finding is consistent with reports that pure-attention models, despite
 strong overall overlap, can produce boundary contours that are subtly
 biased \citep{chen2021transunet}, an effect that compounds when
@@ -35,18 +40,28 @@ generic semantic-segmentation prowess.
 
 The original CAMUS paper \citep{leclerc2019} reported nnU-Net HD95
 $\approx 4.3$~mm and EF MAE $\sim$$9\%$. Our reproduced nnU-Net under the
-unified protocol reaches HD95 $4.27$~mm and EF MAE $5.52\%$. The two axes
-therefore behave very differently: boundary accuracy is statistically
-indistinguishable from the 2019 result, while EF error falls by roughly
-$40\%$.
+unified protocol reaches HD95 $4.27$~mm and EF MAE $8.32\%$
+($r = 0.783$).
+Both axes
+therefore behave the same way, and it is not the way we first read them:
+boundary accuracy is statistically indistinguishable from the 2019 result,
+and so, very nearly, is EF.
 
-We read this as evidence that the contour itself is close to the ceiling
-imposed by annotation quality on CAMUS. Inter-observer variability on
-this dataset is of the same order as the differences we measure between
-architectures --- whereas the downstream clinical quantity still has room
-to improve. Where EF does improve, it is \emph{not} an architectural
-effect: nnU-Net's architecture is unchanged. It is attributable to three
-training-protocol upgrades made standard since 2019:
+This is a negative result about protocol, and we state it as such because
+an earlier version of this analysis reported the opposite. Computing EF from
+predictions on the resized $256 \times 256$ grid while passing the native
+pixel spacing yields ventricular volumes near $10$~ml against a true
+$\approx 108$~ml, and the error does not cancel in the EF ratio. Every EF
+number in this paper is now computed at native resolution with the official
+CAMUS implementation; Section~\ref{sec:results-clinical} reports the result, and the
+ground-truth oracle at $5.44\%$ bounds it.
+
+We therefore read the contour \emph{and} the derived clinical quantity as
+close to their respective ceilings on CAMUS --- the first set by annotation
+variability, which is of the same order as the differences we measure between
+architectures, and the second by the biplane estimator itself. Three
+training-protocol upgrades made standard since 2019 are nonetheless worth
+recording, because they are what makes the reproduction possible at all:
 \begin{enumerate}[leftmargin=*,nosep]
 \item Cosine-with-warm-restarts learning-rate schedule with
       $10$-epoch warmup, in place of the original ReduceLROnPlateau.
@@ -114,9 +129,9 @@ correlate with strong performance:
       Pretraining is nonetheless neither necessary nor sufficient for
       top-tier accuracy on CAMUS: the two scratch-trained models nnU-Net and
       UNet-V1 place second and fourth on mean Dice --- ahead of the
-      pretrained Swin-UNet, FPN-UNet, and DeepLabV3+ --- and nnU-Net also
-      attains the best EF agreement at roughly one-sixth of TransUNet's
-      parameter count. Encoder pretraining thus appears to help mainly where
+      pretrained Swin-UNet, FPN-UNet, and DeepLabV3+ --- and UNet-V1 also
+      attains the best EF agreement of any architecture tested. Encoder
+      pretraining thus appears to help mainly where
       an architecture's from-scratch inductive bias is weaker, rather than
       conferring a uniform advantage on this dataset.
 \item \textbf{Deep skip connections} (every U-Net-shaped architecture
@@ -144,11 +159,13 @@ the four top-tier architectures should be driven by three criteria:
 (i) clinical accuracy target, (ii) hardware constraints, and (iii)
 inference-time latency budget.
 \begin{itemize}[leftmargin=*,nosep]
-\item For \emph{maximum reproducibility and tightest EF agreement},
-      nnU-Net is the recommended choice (lowest EF MAE, smallest
-      Bland--Altman bias).
+\item For \emph{tightest EF agreement}, UNet-V1 attains the lowest EF MAE
+      ($6.56\%$) and TransUNet the smallest Bland--Altman bias
+      ($-0.54\%$). The two differ by less than the run-to-run variation
+      documented in Sec.~\ref{sec:results-clinical}, so we do not
+      recommend one over the other on this axis.
 \item For \emph{maximum boundary accuracy} at deployment-irrelevant cost,
-      TransUNet is the highest-HD95 model.
+      TransUNet has the lowest HD95 ($4.08$~mm).
 \item For \emph{edge / portable ultrasound deployment} where
       parameters and latency dominate, nnU-Net at $15.6$~M parameters
       remains the best trade-off; no smaller architecture in our

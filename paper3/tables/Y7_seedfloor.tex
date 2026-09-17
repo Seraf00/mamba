@@ -1,0 +1,21 @@
+%=========================================================================
+% Paper 3 / Y7 - Seed noise floor (auto-generated)
+%   <- results/yolo/all_runs.csv, runs E9_seed0, E9_seed1, E9_seed2
+%=========================================================================
+\begin{table}[t]
+\centering
+\caption{3 trainings of one identical configuration differing only in random seed. The range bounds the smallest difference that can be credibly attributed to a design choice and is used as that threshold throughout. The standard deviation is given because a range grows with the number of runs, so only the SD may be compared against the spread of a larger set of configurations.}
+\label{tab:seeds}
+\begin{tabular}{lccc}
+\toprule
+& Dice & HD95 (mm) & missed frames \\
+\midrule
+seed 0 & 0.9151 & 3.736 & 1 \\
+seed 1 & 0.9064 & 3.871 & 6 \\
+seed 2 & 0.9125 & 3.821 & 2 \\
+\midrule
+range  & 0.0087 & \textbf{0.134} & 5 \\
+SD     & 0.0045 & 0.068 & 2.6 \\
+\bottomrule
+\end{tabular}
+\end{table}

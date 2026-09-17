@@ -1,0 +1,95 @@
+%==============================================================================
+% Paper 2 -- IEEE ISBI (4 pages, two-column)
+%
+% "Real-time multi-structure echocardiographic segmentation with YOLO"
+%
+% Build:  latexmk -pdf main.tex        (from paper2/)
+%
+% Tables and figures are auto-generated:
+%   python scripts/yolo/aggregate_results.py   -> tables/Y*.tex
+%   python scripts/yolo/make_figures.py        -> figures/fig_*.pdf
+%
+% Numbers still awaiting the GPU sweep are wrapped in \pending{} so they are
+% impossible to miss in the compiled PDF. Once the sweep finishes, the tables
+% regenerate themselves and the \pending macros in the prose are the only
+% manual edit left.
+%==============================================================================
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{balance}
+\usepackage[hidelinks]{hyperref}
+\usepackage{cite}
+
+% Numbers pending the full GPU sweep -- deliberately loud.
+\newcommand{\pending}[1]{\textcolor{red}{\textbf{[#1]}}}
+
+\graphicspath{{figures/}}
+
+\begin{document}
+
+\title{How Close Can a Real-Time Detector Get?\\
+Polygon-Encoded YOLO Segmentation for\\
+Multi-Structure Echocardiography}
+
+\author{\IEEEauthorblockN{Anonymous Submission}
+\IEEEauthorblockA{Paper ID \pending{ID}}}
+
+\maketitle
+
+\begin{abstract}
+Semantic segmentation networks dominate cardiac ultrasound benchmarks, but
+their cost is poorly matched to handheld probes. Real-time detectors such as
+YOLO are an obvious alternative, yet cannot be applied to the CAMUS label space
+directly: the myocardium is an \emph{annulus}, and a YOLO instance mask is a
+single polygon, which has no hole. We encode the epicardium as a \emph{filled}
+contour and recover the myocardium by subtraction, and quantify what that
+representation can express: a perfect model under it reaches $0.997$ Dice at
+$0.308$\,mm HD95, exactly one pixel. On the official CAMUS split this yields
+$3.809$\,mm HD95 at $2.7$\,M parameters -- the best in the benchmark, ahead of
+the strongest baseline by twice the seed noise -- with mean Dice $0.9113$,
+statistically indistinguishable from the four leading baselines, and
+encoder--decoders scale $4$--$8\times$ with pixel count. The negative result is
+the more useful one: having first measured run-to-run variance ($0.134$\,mm
+across seeds, which a paired test over 200 frames calls significant), we find
+that \emph{no} configuration change we tried improves on the stock setting.
+Code and the full experiment plan are released.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Echocardiography, cardiac segmentation, YOLO, instance segmentation,
+real-time inference, CAMUS.
+\end{IEEEkeywords}
+
+\input{sections/01_introduction}
+\input{sections/02_method}
+\input{sections/03_experiments}
+\input{sections/04_results}
+\input{sections/05_conclusion}
+
+\section*{Compliance with Ethical Standards}
+Conducted retrospectively on the publicly available CAMUS
+dataset~\cite{leclerc2019camus}; ethical approval was not required, as
+confirmed by the licence attached to that dataset.
+\emph{Acknowledgments:} \pending{funding statement}
+\emph{Relationship to other work:} a journal-length version of this study is
+under review elsewhere; it shares the dataset, encoding and ablation grid, and
+adds a latency protocol, an ejection-fraction analysis and per-patient
+significance testing. This is the preliminary version.
+\emph{Generative AI:} a large language model assisted with drafting,
+copy-editing and code refactoring; the authors reviewed all content and take
+full responsibility for it.
+
+\balance
+% IEEEtran's .bst fixes the reference font, so shrink the inter-item glue
+% instead -- the documented hook for tightening the bibliography.
+\def\IEEEbibitemsep{0pt plus .5pt}
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

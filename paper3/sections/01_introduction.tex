@@ -1,0 +1,84 @@
+\section{Introduction}
+\label{sec:intro}
+
+Two-dimensional echocardiography is the first-line modality for assessing
+cardiac function. Delineation of the left-ventricular (LV) endocardium,
+myocardium and left atrium underpins every downstream measurement, ejection
+fraction (EF) chief among them, and automating it has been an active target
+since the release of the CAMUS benchmark~\cite{leclerc2019camus}. Progress has
+been rapid: encoder--decoder networks~\cite{ronneberger2015unet,isensee2021nnunet}
+and transformer hybrids~\cite{chen2021transunet,cao2022swinunet} now routinely
+report mean Dice above $0.90$.
+
+That number deserves scrutiny. The authors of CAMUS report an average
+inter-observer Dice of $0.899$ on this data~\cite{leclerc2019camus}: two
+cardiologists tracing the same frames agree with one another to about that
+level. A model scoring $0.92$ is therefore not $0.02$ away from being correct;
+it is already past the point where the reference itself is stable, and further
+gains in overlap increasingly measure conformity to one annotator's habits
+rather than anatomical accuracy.
+
+This paper asks what still moves accuracy in that regime, and answers it mostly
+in the negative. We use real-time instance segmentation as the test bed, for two
+reasons. First, it is a genuinely different architectural family from the
+encoder--decoders that occupy the benchmark, so if the ceiling is a property of
+the task rather than of one architecture, a detector should hit it too. Second,
+it is the deployment-relevant one: handheld probes push echocardiography to the
+bedside, where inference must run on an embedded accelerator alongside a live
+image stream.
+
+Applying a detector to CAMUS is not, however, a matter of changing the
+dataloader. An instance mask is supervised as a \emph{single closed polygon},
+and one of the three CAMUS structures --- the myocardium --- is an annulus. A
+polygon has no hole. It is natural to assume that how one resolves this matters,
+and we show that it does not, along with almost everything else one might tune.
+
+\subsection{Contributions}
+
+\textbf{An encoding for nested cardiac structures, and its ceiling.} We define
+the second class as the \emph{filled} epicardial disc and recover the myocardium
+by subtraction, keeping the mask head on simply-connected shapes
+(Sec.~\ref{sec:encoding}). We quantify what such an encoding can express by
+converting ground truth to polygons, rasterising it back and scoring it against
+the untouched reference. At 96 vertices this reaches $0.997$ Dice and
+$0.308$\,mm HD95 --- exactly one pixel at the CAMUS spacing. The polygon
+representation is therefore not what limits a detector on this task.
+
+\textbf{A measured noise floor, and ablations read against it.} Before
+interpreting any comparison we train one configuration under three seeds. The
+spread is $0.134$\,mm HD95, and a paired Wilcoxon test over the 200 test frames
+calls two such runs significantly different ($p{=}0.035$). We therefore treat
+$0.134$\,mm as the smallest credible effect. This is not a formality: several of
+the differences we would otherwise have reported as significant, and several
+reported in the literature, are smaller than this.
+
+\textbf{Thirteen factors, no improvements.} We sweep encoding, vertex budget,
+model scale and generation, input resolution, mask-prototype resolution,
+augmentation recipe, pretraining, training-set size, a boundary-weighted loss,
+the three loss gains and the optimiser --- roughly fifty training runs on one
+laptop GPU (Sec.~\ref{sec:results}). None improves on a stock configuration
+beyond the noise floor. Higher-resolution mask prototypes are significantly
+\emph{worse}. What does register is training-side: augmentation and
+initialisation.
+
+\textbf{A like-for-like comparison, including latency.} We evaluate on the
+official CAMUS split, verified byte-identical to the released subgroup lists,
+against nine semantic-segmentation baselines under one protocol, with HD95 at
+native resolution in millimetres. Because published latencies are measured on
+heterogeneous hardware, we re-time every model ourselves under a single
+protocol, at two input resolutions, which shows the detector to be
+near-invariant to resolution where encoder--decoders scale with pixel count.
+
+\textbf{A fault in the reference EF implementation.} The official CAMUS
+ejection-fraction code selects a contour by position rather than by area. This
+is invisible on ground truth, which is single-component, but model predictions
+carry occasional spurious blobs: on one baseline, $6\%$ of frames, which was
+sufficient to drive EF correlation from $r{=}0.825$ to $r{=}0.080$
+(Sec.~\ref{sec:ef}). Any EF computed from predictions with the reference code at
+native resolution is unreliable without a connected-component filter.
+
+Our aim is not a leaderboard position. It is to establish, with the variance
+measured rather than assumed, which of the choices practitioners routinely tune
+actually matter on a benchmark that has reached annotator agreement --- and to
+document the measurement pitfalls we encountered, several of which affect
+published numbers.

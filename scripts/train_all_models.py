@@ -46,7 +46,7 @@ from models import get_model, list_models
 from training import Trainer, TrainingConfig, CombinedLoss
 from training.callbacks import EarlyStopping, ModelCheckpoint, TensorBoardLogger, CSVLogger
 from metrics import SegmentationMetrics, EfficiencyBenchmark
-from utils import set_seed, get_device
+from utils import set_seed, pin_determinism, get_device
 
 
 def cleanup_gpu_memory():
@@ -57,6 +57,38 @@ def cleanup_gpu_memory():
         torch.cuda.synchronize()
         # Reset memory stats for accurate tracking
         torch.cuda.reset_peak_memory_stats()
+
+
+# Measured peak allocation at batch 8, 256 px, AMP, in GiB. Only models that
+# exceed a common card need an entry; everything else fits anywhere.
+PEAK_GIB_AT_BATCH8 = {
+    'dense_context_unet': 18.9,
+    'mamba_dense_context_unet': 18.9,
+}
+
+
+def _micro_batch_for(model_name: str, batch_size: int = 8) -> Optional[int]:
+    """Micro-batch size this model needs on THIS card, or None if it fits.
+
+    Returns None whenever the GPU can hold the full batch, so a card with room
+    trains the model as specified and only a card without one falls back to
+    gradient accumulation. The 0.85 factor leaves headroom for the CUDA context,
+    fragmentation, and whatever else shares the device.
+    """
+    need = PEAK_GIB_AT_BATCH8.get(model_name)
+    if not need:
+        return None
+    if not torch.cuda.is_available():
+        return 2
+    total_gib = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+    if need <= total_gib * 0.85:
+        return None
+    # Largest power-of-two divisor of batch_size that is projected to fit.
+    per_sample = need / batch_size
+    for mb in (4, 2, 1):
+        if batch_size % mb == 0 and per_sample * mb <= total_gib * 0.85:
+            return mb
+    return 1
 
 
 def get_model_training_overrides(model_name: str) -> Dict[str, Any]:
@@ -70,6 +102,20 @@ def get_model_training_overrides(model_name: str) -> Dict[str, Any]:
         Dict of TrainingConfig overrides for this model.
     """
     overrides = {}
+
+    # Models that cannot hold the canonical batch on a small card. The effective
+    # batch stays 8 via gradient accumulation; only the micro-batch actually
+    # resident on the GPU is smaller.
+    #
+    # This is a concession to hardware, not a design choice: it makes BatchNorm
+    # see `micro_batch` samples where the specification says 8. So it applies
+    # only when the card genuinely cannot hold the full batch. Running it on a
+    # GPU with room to spare would put a deviation in the results that nothing
+    # required -- and would make the same model behave differently on different
+    # machines, which is the class of confound this revision exists to remove.
+    micro = _micro_batch_for(model_name)
+    if micro:
+        overrides['micro_batch'] = micro
 
     # Pure transformer models — need warmup + lower LR + grad clipping
     # (prior 5e-4 caused NaN divergence at epoch ~9-13 across all SSM variants)
@@ -188,6 +234,43 @@ SWIN_MODELS = ['swin_unet', 'mamba_swin_unet']  # Require 224x224
 
 # Model + Mamba-variant combinations that are architecturally incompatible
 # and should be skipped during training. Reason documented for paper.
+# SSM positions each architecture actually exposes. These differ because the
+# architectures differ: DeepLabV3+ has no skip stage worth speaking of, FPN has
+# a neck the U-Nets do not, and Swin's decoder is a stack of the same block type
+# as its encoder. A uniform four-position factorial is therefore not available,
+# and the ablation is ragged by construction -- which is a fact about the model
+# zoo, not a shortcut.
+#
+# pure_mamba_unet is absent on purpose: it is all-SSM, so there is no non-SSM
+# fallback to ablate to and every arm would be the same model.
+POSITION_SETS = {
+    'mamba_unet_v1':            ('encoder', 'skip', 'bottleneck'),
+    'mamba_unet_v2':            ('encoder', 'skip', 'bottleneck'),
+    'mamba_unet_resnet':        ('encoder', 'skip', 'bottleneck'),
+    'mamba_nnunet':             ('encoder', 'skip', 'bottleneck'),
+    'mamba_dense_context_unet': ('encoder', 'skip', 'bottleneck'),
+    'mamba_transunet':          ('encoder', 'skip', 'bottleneck'),
+    'mamba_deeplab':            ('bottleneck', 'decoder'),
+    'mamba_swin_unet':          ('encoder', 'decoder', 'bottleneck'),
+    'mamba_fpn':                ('skip', 'neck', 'bottleneck', 'decoder'),
+}
+
+
+def position_arms(model_name):
+    """Yield ``(label, kwargs)`` for one model's ablation arms.
+
+    One arm per single position, plus an all-off arm. The all-on arm is the
+    existing trained model and is not re-emitted.
+    """
+    positions = POSITION_SETS.get(model_name)
+    if not positions:
+        return
+    for p in positions:
+        yield (f'pos-{p}',
+               {f'mamba_in_{q}': (q == p) for q in positions})
+    yield ('pos-none', {f'mamba_in_{q}': False for q in positions})
+
+
 INCOMPATIBLE_COMBINATIONS = {
     # VMamba's 4-directional cross-scan combined with DenseContextUNet's dense
     # skip concatenations produces a >12 GiB activation spike in the SSM backward
@@ -270,14 +353,52 @@ def parse_args():
                         help='Device (cuda or cpu)')
     parser.add_argument('--mixed_precision', action='store_true',
                         help='Use automatic mixed precision training')
+    parser.add_argument('--pin', type=str, default='off',
+                        choices=['full', 'cudnn', 'tf32', 'algos', 'off'],
+                        help='Pin arithmetic precision and algorithm choice. '
+                             '"full" is the canonical setting for every session '
+                             'that must be comparable to the EF tables: it '
+                             'disables TF32, which moved FPN-UNet EF by 0.88 '
+                             'points -- more than the gaps between adjacent '
+                             'architectures. The other modes exist to ablate a '
+                             'single flag. Default "off" preserves the '
+                             'behaviour of the sessions already on disk.')
     
     # Parameter-matched baselines (for fair comparison)
     parser.add_argument('--param_matched', action='store_true',
                         help='Also train wider base models matching Mamba param counts')
     parser.add_argument('--param_config', type=str, default=None,
                         help='JSON file from param_match.py with base_features per model')
+
+    # SSM position ablation (Paper 2, prediction P1)
+    parser.add_argument('--position_ablation', action='store_true',
+                        help='Train one arm per single SSM position, plus a '
+                             'no-SSM arm, for every model in POSITION_SETS')
+    parser.add_argument('--position_models', nargs='*', default=None,
+                        help='Restrict the position ablation to these models '
+                             '(default: every model in POSITION_SETS)')
+    parser.add_argument('--position_only', action='store_true',
+                        help='With --position_ablation, train ONLY the ablation '
+                             'arms -- no base models and no all-on SSM models, '
+                             'which the canonical and SSM sessions already have')
     parser.add_argument('--base_features', type=int, default=None,
                         help='Override base_features for all models (for manual matching)')
+
+    # Concurrency. A single training job at batch 8 / 256 px uses a small
+    # fraction of a large GPU -- the models are tiny and the wall time is kernel
+    # launch and dataloading, not arithmetic. Sharding runs several of them side
+    # by side on one card, which is the only way a big GPU helps here: raising
+    # the batch size would help utilisation and would also reintroduce the exact
+    # confound this revision removes. Each shard takes every Nth model of the
+    # SAME plan, so the arms, wide controls and variants are split without any
+    # of them being enumerated twice.
+    parser.add_argument('--num_shards', type=int, default=1,
+                        help='Split the training plan across this many processes')
+    parser.add_argument('--shard', type=int, default=0,
+                        help='Which shard this process trains (0-indexed)')
+    parser.add_argument('--merge_shards', action='store_true',
+                        help='Do not train: merge all_results_shard*.json in '
+                             'the experiment directory into all_results.json')
 
     # Debugging
     parser.add_argument('--dry_run', action='store_true',
@@ -291,9 +412,11 @@ def parse_args():
 def _load_param_config(args) -> Dict[str, Dict[str, Any]]:
     """Load parameter-matched override kwargs from JSON config.
 
-    Returns a mapping ``{base_model_name: override_kwargs_dict}``. Models tied
-    to fixed pretrained Transformer weights (Swin-Tiny / ViT-B/16) are
-    excluded by ``param_match.py`` itself, so they simply don't appear here.
+    Returns a mapping ``{base_model_name: override_kwargs_dict}``. Models that
+    need no widened control -- because their Mamba variant adds under
+    ``MIN_INCREASE_PCT_FOR_CONTROL`` parameters, as nnU-Net (-1.9%),
+    DeepLabV3+ (+4.1%) and UNet-ResNet (+11.1%) do -- are excluded by
+    ``param_match.py`` itself, so they simply don't appear here.
 
     Supports both the new schema (``override_kwargs`` dict per entry) and the
     legacy schema (``base_features`` int) for back-compat with old configs.
@@ -362,6 +485,33 @@ def get_models_to_train(args) -> List[Dict[str, Any]]:
                 'extra_kwargs': extra_kwargs.copy(),
             })
 
+    # SSM position ablation arms
+    if args.position_ablation:
+        wanted = set(args.position_models or POSITION_SETS)
+        # The all-on arm of every model is what the SSM session already trained,
+        # and the base models are what the canonical session trained. Running
+        # the ablation as its own job should not retrain either of them, so
+        # --position_only drops everything that is not an ablation arm.
+        if args.position_only:
+            models = []
+        n_before = len(models)
+        for model_name in MAMBA_MODELS:
+            if model_name not in wanted or model_name not in POSITION_SETS:
+                continue
+            for mamba_type in args.mamba_variants:
+                if (model_name, mamba_type) in INCOMPATIBLE_COMBINATIONS:
+                    continue
+                for label, kwargs in position_arms(model_name):
+                    models.append({
+                        'name': model_name,
+                        'mamba_type': mamba_type,
+                        'display_name': f'{model_name}_{mamba_type}_{label}',
+                        'extra_kwargs': {**extra_kwargs, **kwargs},
+                    })
+        print(f'[position_ablation] added {len(models) - n_before} arms across '
+              f'{len(wanted & set(POSITION_SETS))} models '
+              f'x {len(args.mamba_variants)} variant(s)')
+
     # Add parameter-matched wider base models if requested
     if args.param_matched:
         param_config = _load_param_config(args)
@@ -377,8 +527,8 @@ def get_models_to_train(args) -> List[Dict[str, Any]]:
 
         # For each base model in the list, add a wider "param-matched" version
         # using whatever knob the model exposes (base_features, backbone, ...).
-        # Models absent from param_config (e.g. swin_unet/transunet which are
-        # tied to fixed pretrained weights) silently skip the wide variant.
+        # Models absent from param_config (those param_match.py marked UNNEEDED
+        # or N/A) silently skip the wide variant.
         base_models_in_list = [m for m in models if m['mamba_type'] is None and m['name'] in base_to_mamba]
         for base_model in base_models_in_list:
             base_name = base_model['name']
@@ -507,17 +657,30 @@ def train_single_model(
     if model_overrides:
         print(f"  Model overrides: {model_overrides}")
     
+    # Micro-batching: the loader yields `micro_batch` samples and the trainer
+    # accumulates gradients so the optimiser still sees `batch_size`. Falls back
+    # to a plain batch when no override applies.
+    micro_batch = model_overrides.get('micro_batch', batch_size)
+    if micro_batch < batch_size and batch_size % micro_batch:
+        raise SystemExit(
+            f"micro_batch {micro_batch} must divide batch_size {batch_size} "
+            f"for {display_name}; otherwise the effective batch is not {batch_size}")
+    accum_steps = max(1, batch_size // micro_batch)
+    if accum_steps > 1:
+        print(f"  Micro-batching: {micro_batch} x {accum_steps} accumulation "
+              f"= effective batch {batch_size}")
+
     # Create data loaders with adjusted batch size
     train_loader = DataLoader(
         train_dataset,
-        batch_size=batch_size,
+        batch_size=micro_batch,
         shuffle=True,
         num_workers=args.num_workers,
         pin_memory=True
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=batch_size,
+        batch_size=micro_batch,
         shuffle=False,
         num_workers=args.num_workers,
         pin_memory=True
@@ -547,6 +710,7 @@ def train_single_model(
         use_amp=args.mixed_precision,
         num_workers=args.num_workers,
         max_grad_norm=model_overrides.get('max_grad_norm', 0.0),
+        gradient_accumulation_steps=accum_steps,
     )
     
     # Callbacks
@@ -775,24 +939,90 @@ def train_single_model_cv(
     return results
 
 
+def merge_shard_results(exp_dir: Path) -> None:
+    """Combine per-shard result files into the all_results.json consumers read.
+
+    Every downstream generator (fill_tables.load_all_results,
+    load_training_summaries, the evaluation scripts) expects one
+    all_results.json per session, so a sharded run is not finished until this
+    has run. Ordering follows experiment_config.json's recorded plan so the file
+    is identical whichever shard happened to finish first -- otherwise the same
+    session would produce a different artefact on every rerun.
+    """
+    shards = sorted(exp_dir.glob('all_results_shard*.json'))
+    if not shards:
+        raise SystemExit(f'No all_results_shard*.json in {exp_dir}')
+
+    merged = []
+    for s in shards:
+        with open(s) as f:
+            merged.extend(json.load(f))
+
+    cfg_path = exp_dir / 'experiment_config.json'
+    if cfg_path.exists():
+        with open(cfg_path) as f:
+            order = json.load(f).get('models_to_train', [])
+        rank = {name: i for i, name in enumerate(order)}
+        merged.sort(key=lambda r: rank.get(r.get('display_name'), len(rank)))
+
+    out = exp_dir / 'all_results.json'
+    with open(out, 'w') as f:
+        json.dump(merged, f, indent=2)
+
+    failed = [r['display_name'] for r in merged if 'error' in r]
+    print(f'Merged {len(shards)} shards -> {out} ({len(merged)} models)')
+    if failed:
+        print(f'  {len(failed)} failed: {", ".join(failed)}')
+
+    create_csv_summary(merged, exp_dir / 'summary.csv')
+
+
 def main():
     args = parse_args()
+
+    # Before anything touches CUDA. Off by default so the sessions already on
+    # disk stay reproducible by their own recipe; every session from the
+    # revision onward passes --pin full.
+    determinism = None
+    if args.pin != 'off':
+        determinism = pin_determinism(args.seed, args.pin)
+        print(f"\nDeterminism pinned (--pin {args.pin}): "
+              f"TF32 matmul={determinism['tf32_matmul']}, "
+              f"TF32 cuDNN={determinism['tf32_cudnn']}, "
+              f"cuDNN deterministic={determinism['cudnn_deterministic']}, "
+              f"benchmark={determinism['cudnn_benchmark']}")
 
     # Check if mamba-ssm is properly configured for Mamba models
     if not args.base_only or (args.models and any('mamba' in m.lower() for m in args.models)):
         check_mamba_installation()
     
-    # Get models to train
-    models_to_train = get_models_to_train(args)
-    
-    if not models_to_train:
-        print("No models to train!")
-        return
-    
     # Create experiment directory
     exp_name = args.exp_name or datetime.now().strftime('benchmark_%Y%m%d_%H%M%S')
     exp_dir = Path(args.output_dir) / exp_name
+
+    if args.merge_shards:
+        merge_shard_results(exp_dir)
+        return
+
     exp_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get models to train
+    models_to_train = get_models_to_train(args)
+
+    # Take every Nth model. Round-robin rather than contiguous blocks so the
+    # expensive models (DenseContextU-Net and FPN are an order of magnitude
+    # slower than the U-Nets) spread across shards instead of landing in one.
+    if args.num_shards > 1:
+        if not 0 <= args.shard < args.num_shards:
+            raise SystemExit(f'--shard must be in [0, {args.num_shards})')
+        total = len(models_to_train)
+        models_to_train = models_to_train[args.shard::args.num_shards]
+        print(f'[shard {args.shard}/{args.num_shards}] training '
+              f'{len(models_to_train)} of {total} models')
+
+    if not models_to_train:
+        print("No models to train!")
+        return
     
     # Device
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
@@ -827,11 +1057,43 @@ def main():
     config = vars(args).copy()
     config['models_to_train'] = [m['display_name'] for m in models_to_train]
     config['start_time'] = datetime.now().isoformat()
-    with open(exp_dir / 'experiment_config.json', 'w') as f:
-        json.dump(config, f, indent=2)
+    if args.num_shards > 1:
+        # Every shard would otherwise race to write this file with its own
+        # subset as "the" plan. Shard 0 writes it and records the whole plan.
+        config['models_to_train'] = [m['display_name']
+                                     for m in get_models_to_train(args)]
+
+    # Record the hardware and library versions this session ran on. Previous
+    # sessions stored only device="cuda", so there is no way to tell from the
+    # artefacts which GPU produced them -- and that matters: TF32 is enabled by
+    # default on Ampere and later but does not exist on Turing, and the
+    # Mamba-2 shared-memory ceiling is a property of the compute capability.
+    # Comparing runs across GPU generations is a confound, so it has to be
+    # visible in the artefact rather than remembered.
+    config['environment'] = {
+        'torch': torch.__version__,
+        'cuda': torch.version.cuda,
+        'cudnn': torch.backends.cudnn.version(),
+        'gpu': torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu',
+        'compute_capability': (
+            '%d.%d' % torch.cuda.get_device_capability(0)
+            if torch.cuda.is_available() else None),
+        'tf32_matmul': torch.backends.cuda.matmul.allow_tf32,
+        'tf32_cudnn': torch.backends.cudnn.allow_tf32,
+        'cudnn_benchmark': torch.backends.cudnn.benchmark,
+        # What --pin actually set, or None when the session ran unpinned. The
+        # flags above are the observed state; this records the intent, so a
+        # session that was meant to be pinned and silently was not is visible.
+        'determinism': determinism,
+    }
+    if args.num_shards == 1 or args.shard == 0:
+        with open(exp_dir / 'experiment_config.json', 'w') as f:
+            json.dump(config, f, indent=2)
     
     # Train all models
     all_results = []
+    results_path = (exp_dir / f'all_results_shard{args.shard}.json'
+                    if args.num_shards > 1 else exp_dir / 'all_results.json')
     total_start = time.time()
     
     for i, model_config in enumerate(models_to_train, 1):
@@ -847,7 +1109,7 @@ def main():
             all_results.append(results)
             
             # Save aggregated results after each model
-            with open(exp_dir / 'all_results.json', 'w') as f:
+            with open(results_path, 'w') as f:
                 json.dump(all_results, f, indent=2)
                 
         except Exception as e:

@@ -1,0 +1,249 @@
+\section{Results}
+\label{sec:results}
+
+\subsection{How large an effect is measurable?}
+\label{sec:noise}
+
+We begin with the noise floor, because it determines how everything that follows
+may be read. Table~\ref{tab:seeds} reports three trainings of one configuration
+differing only in random seed.
+
+\input{tables/Y7_seedfloor}
+
+Two consequences follow. First, HD95 varies by $0.134$\,mm from the seed alone,
+so no smaller difference should be attributed to a design choice; we adopt this
+as the threshold throughout. Second, and more troubling for evaluation practice
+generally, a paired Wilcoxon test between seeds 0 and 1 --- runs identical in
+every respect except the random seed --- returns $p{=}0.035$ on HD95. A paired
+test over 200 frames is powerful enough to certify pure seed variation as a
+significant effect. Reporting $p<0.05$ from single-seed runs on this benchmark
+is therefore not sufficient evidence of an improvement.
+
+The most seed-sensitive quantity is not an accuracy metric at all but the number
+of frames on which a structure is missed entirely, which ranges from 1 to 6
+across these three runs. We return to this in Sec.~\ref{sec:detection}.
+
+\subsection{Encoding ceiling}
+
+Table~\ref{tab:ceiling} reports what each encoding can express as a function of
+the vertex budget $n$.
+
+\input{tables/Y3_ceiling}
+
+The filled decomposition is effectively lossless at a modest budget: at $n{=}96$
+it reaches $0.9970$ Dice and $0.308$\,mm HD95. Since the CAMUS pixel spacing is
+$0.308$\,mm, that HD95 is exactly one pixel --- the discretisation floor. The
+polygon representation is therefore not the limiting factor for a detector on
+this task, which is the premise the remainder of the study rests on.
+
+The two encodings are nearly indistinguishable on the recomposed label map,
+because Eq.~\ref{eq:decomp} re-carves the hole either way. They differ on the
+raw second-class target: at $n{=}32$ the filled disc is reproduced at $0.9953$
+Dice against $0.9671$ for the seam-cut annulus, a gap of $0.028$. A thin ring
+must spend its vertex budget on two contours rather than one, so each is
+described half as finely.
+
+\subsection{Thirteen factors, no improvements}
+
+Table~\ref{tab:ablation} collects the ablation grid. Read against the
+$0.134$\,mm floor, the summary is quickly stated: nothing improves on the stock
+configuration.
+
+\input{tables/Y2_ablation}
+
+\paragraph{Overlap is saturated; boundary distance is not} Across the $32$
+distinct configurations trained in this study, Dice spans $0.9035$ to $0.9177$
+and HD95 spans $3.70$ to $4.07$\,mm. Stated as ranges these look comparable, but
+a range grows with the number of samples drawn and so cannot be set against the
+three-seed floor of Sec.~\ref{sec:noise}. The standard deviation can, because it
+is not biased by sample size, and on that statistic the two axes separate
+cleanly. Between-configuration Dice varies \emph{less} than the seed floor
+($0.0037$ against $0.0045$, a ratio of $0.83$), while between-configuration HD95
+varies half again as much ($0.099$ against $0.068$, a ratio of $1.46$).
+
+Thirteen design factors therefore move Dice by no more than retraining one
+configuration under a different seed, and move boundary distance measurably
+more. This is the central negative result of the paper, and it is stronger than
+a range comparison would suggest: it is not that the factors fail to clear a
+threshold, but that on overlap they produce less spread than doing nothing at
+all. Reporting Dice alone on CAMUS therefore conceals most of what an ablation
+reveals, and is the single clearest argument for the millimetre-scale
+native-resolution protocol of Sec.~\ref{sec:protocol}.
+
+\paragraph{Capacity does not help} Model scale from $2.7$ to $27$\,M parameters,
+input resolution from $512$ to $960$\,px, and mask-prototype resolution all fail
+to beat the noise floor. Full-resolution prototypes are significantly
+\emph{worse} ($+0.157$\,mm, $p{=}0.008$) at $3.5\times$ the training cost, which
+is consistent with over-parameterising the mask path on 1600 images. Input
+resolution above $640$\,px is flat: giving the mask head $240\times240$
+prototypes instead of $160\times160$ changes nothing.
+
+\paragraph{Nor does more data} Training on the full annotated cardiac cycle ---
+$17{,}006$ frames, $10.6\times$ the supervision --- does not improve ED/ES
+accuracy. The additional frames interpolate between the two extremes they are
+meant to support and are highly correlated with them, so they add little
+independent information.
+
+\paragraph{Training-side factors do register} Removing augmentation entirely
+costs $0.318$\,mm ($p{<}0.001$), the largest effect measured anywhere in this
+study --- larger than $10\times$ the parameters, larger than any resolution
+change. COCO initialisation is worth $0.183$\,mm ($p{=}0.009$) despite grayscale
+sector ultrasound resembling nothing in COCO, which suggests the transfer is of
+low-level edge and texture filters that 1600 images cannot supply.
+
+The \emph{recipe}, however, does not matter: our anatomically-motivated
+augmentation is statistically indistinguishable from the stock natural-image
+recipe ($p{=}0.31$), even though the latter includes mosaic compositing and
+horizontal flipping that we argued are anatomically invalid. Adding horizontal
+flipping alone to the echo-aware recipe is harmful ($+0.203$\,mm, $p{=}0.019$),
+yet the stock recipe --- which also flips --- is not. We did not isolate this
+interaction and report it as unresolved.
+
+\paragraph{Neither the objective nor the optimiser} A boundary-weighted mask
+loss, which upweights pixels near the contour by a factor $1+\lambda$, fails at
+every $\lambda \in \{2,5,10\}$ and at its mildest setting is significantly
+harmful ($+0.216$\,mm, $p{<}0.001$). Scaling the segmentation, classification or
+distribution-focal loss gains, and substituting AdamW or SGD for the
+automatically selected optimiser, leave HD95 inside the noise floor in all six
+arms ($p \geq 0.06$). Doubling the weight on the segmentation loss --- the term
+most directly tied to boundary quality --- changes HD95 by $0.001$\,mm.
+
+\subsection{The annulus is a non-problem, and the ceiling is not predictive}
+
+Neither encoding nor vertex budget produces a measurable difference: filled
+versus seam at 96 vertices ($p{=}0.87$), 96 versus 32 vertices ($p{=}0.31$), and
+filled versus seam at 32 vertices ($p{=}0.34$).
+
+The last of these is a genuine falsification and worth stating plainly. The
+ceiling analysis predicts a $0.228$\,mm penalty for the seam encoding at 32
+vertices. That exceeds the noise floor and should have been visible. The
+observed difference is $0.019$\,mm, with the opposite sign. \emph{The encoding
+ceiling is a valid upper bound but not a predictor of trained-model
+differences}: a representational penalty of $0.2$\,mm is simply invisible when
+model error is $3.7$\,mm. Practically, any reasonable encoding suffices, and we
+recommend the filled decomposition because it is simpler to implement --- no
+seam construction, no winding-order bugs --- not because it scores better.
+
+\subsection{Comparison with semantic segmentation}
+
+\input{tables/Y1_main}
+
+Table~\ref{tab:main} places the configuration alongside nine baselines on the
+official split. Averaged over three seeds it reaches $0.9113$ mean Dice and
+$3.809$\,mm HD95 at $2.7$\,M parameters, against $0.9121$/$4.081$\,mm for
+TransUNet ($102$\,M) and $0.9099$/$4.270$\,mm for nnU-Net ($15.6$\,M).
+
+The two axes do not give the same answer, and the difference is the point of
+this paper. On boundary distance the detector is the best in the benchmark by
+$0.271$\,mm, which is twice the $0.134$\,mm seed floor of
+Sec.~\ref{sec:noise} and therefore a difference we are willing to attribute. On
+overlap it is not distinguishable from the leading baselines: tested over the
+$50$ patients rather than the $200$ frames, with seeds averaged rather than the
+best selected, it separates from five of the nine baselines and not from
+TransUNet, nnU-Net, UNet-V1 or UNet-ResNet --- and its point estimate is
+$0.0008$ Dice \emph{behind} TransUNet.
+
+We report it this way because the alternative is available and flattering:
+scoring seed~0 over the $200$ frames yields $0.9151$ Dice and separation from
+eight of nine baselines. A paper arguing that single-seed frame-level tests
+overstate differences cannot then rest its own headline on one.
+
+Two external comparisons are available on the same official split. Against a
+contour-guided boundary-aware method reporting per-structure Dice of
+$93.95$/$88.09$/$89.15$ (mean $90.40$), our seed mean is
+$93.86$/$87.91$/$91.62$ (mean $91.13$): ahead on the left atrium and on the
+three-class mean, and marginally behind on both ventricular classes. Reporting
+our best seed instead would have given $94.19$/$88.60$/$91.74$ and a clean sweep,
+which is precisely the selection this paper argues against. Against a multi-task
+framework reporting $0.951$ Dice for the LV cavity at ED, our LV-endocardial
+Dice at ED is $0.9523$.
+
+We attach limited weight to either, and note that both are additionally
+compromised as comparisons: the published figures are single runs, ours are seed
+means, and neither paper reports the variance that would make the difference
+interpretable. All the gaps here are of the order of our own seed floor. The
+more informative reference point is the dataset authors' own: average
+inter-observer Dice on CAMUS is $0.899$. Every model in
+Table~\ref{tab:main} above $0.90$ is already operating beyond the level at which
+two cardiologists agree.
+
+\subsection{Latency}
+
+\input{tables/Y5_latency}
+
+Under a single protocol the detector is \emph{near-invariant to input
+resolution}: $15.7$\,ms at $256$\,px and $15.5$\,ms at $640$\,px, a $4\%$
+increase for $6.25\times$ the pixels. Every encoder--decoder scales with pixel
+count over the same range, by factors of four to eight. At matched $640$\,px the
+detector is between $1.5\times$ and $23\times$ faster than every baseline;
+end-to-end inference including pre-processing and native-resolution mask
+assembly is $11.8$\,ms.
+
+This is a property of the architecture family rather than a tuning outcome: the
+detector's cost is dominated by fixed per-layer overhead rather than by
+convolution over pixels at this scale, so the resolution one would want for
+boundary accuracy is nearly free, where for an encoder--decoder it is punitive.
+
+Neither FP16 ($16.7$\,ms) nor ONNX Runtime export ($23.5$\,ms) improved on the
+PyTorch path. At $2.7$\,M parameters the conversion and transfer overheads
+dominate. We report this because the opposite is commonly assumed.
+
+\subsection{Ejection fraction}
+\label{sec:ef}
+
+\input{tables/Y6_ef}
+
+Computed with the official implementation at native resolution, the detector
+reaches $9.24\%$ MAE at $r{=}0.756$: within the range spanned by the baselines
+($6.66$--$9.74\%$, $r{=}0.640$--$0.827$) but not leading them. We claim no EF
+advantage.
+
+The ceiling is more informative than the ranking. Feeding the \emph{ground-truth}
+masks through the identical pipeline yields $5.44\%$ MAE at $r{=}0.863$. That is
+the irreducible gap between mask-derived EF and the clinically recorded value,
+and it consumes the majority of every model's error. EF on CAMUS is therefore
+substantially method-limited rather than segmentation-limited.
+
+\paragraph{A fault in the reference implementation} The official Simpson code
+selects \texttt{find\_contours($\cdot$)[0]} --- the first contour returned,
+ordered by position rather than by area. Ground truth is single-component, so
+this never manifests and the fault has survived in released code. Model
+predictions carry occasional spurious blobs, and because EF requires all four of
+a patient's masks, a handful of such frames poisons whole patients.
+
+We quantified this by re-running all nine baselines with the filter disabled.
+The effect is severe where it occurs and absent elsewhere. On UNet-V1, EF
+correlation collapses from $r{=}0.825$ to $r{=}0.080$ and MAE rises from
+$6.62\%$ to $11.34\%$ purely by removing the filter; DenseContextU-Net moves
+from $9.38\%$ to $12.88\%$ ($r$ $0.763$ to $0.550$). The remaining seven
+baselines are unchanged to the precision we report. Whether the fault bites
+therefore depends on whether a given model emits spurious components at all,
+which is not a property one can assume --- and a pipeline that never checks will
+not distinguish the two cases.
+
+We verified that this is specific to native-resolution evaluation. On a
+$256\times256$ grid the spurious components are sub-pixel and vanish, and
+filtering slightly \emph{degrades} the result. Practitioners computing EF from
+predictions at native resolution must apply a connected-component filter; those
+working on a resampled grid are protected by accident rather than by design.
+
+\subsection{Detection reliability is a separate axis}
+\label{sec:detection}
+
+A detector can decline to emit an instance, leaving a structure with no contour
+at all --- a failure mode a semantic network cannot have, since it assigns every
+pixel a label. This is invisible to Dice computed over detected frames and
+dominates Dice computed over all frames. In one comparison an apparent $0.0116$
+Dice deficit was traced entirely to nine dropped instances; on the 190 frames
+where both models detected all three structures they were statistically
+identical ($p{=}0.72$).
+
+It is also the most seed-sensitive quantity we measured (Table~\ref{tab:seeds}),
+which means single-run miss counts should not be read as properties of a
+configuration.
+
+Crucially it is eliminable. Lowering the confidence threshold from the
+natural-image default of $0.25$ to $0.10$ removes every missed detection --- 0
+of 200 frames --- while leaving Dice and HD95 unchanged. Where every structure
+is known a priori to be present, the usual precision--recall trade-off does not
+apply, and the threshold should be set far below the detection default.

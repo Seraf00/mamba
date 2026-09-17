@@ -1,0 +1,43 @@
+%============================================================================
+% Y2 -- ablation grid (auto-generated)
+%============================================================================
+\begin{table}[t]
+\centering
+\caption{Ablations on the CAMUS test split. Each block varies one factor, all others held at the default configuration (YOLO26n-seg, 640\,px, filled-contour encoding, echo-aware augmentation, COCO-pretrained). D: mean Dice; H: HD95 in mm. Best per block in \textbf{bold}.}
+\label{tab:ablation}
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{@{}lcc@{\hspace{5pt}}lcc@{}}
+\toprule
+Setting & D & H & Setting & D & H \\
+\midrule
+\textit{Annulus encoding} & & & \textit{Augmentation recipe} & & \\
+\quad Filled contour (ours) & 0.9151 & 3.74 & \quad Echo-aware & \textbf{0.9151} & 3.74 \\
+\quad Seam-cut annulus & \textbf{0.9177} & 3.70 & \quad Stock COCO & 0.9121 & 3.76 \\
+\textit{Polygon vertex budget} & & & \quad None & 0.9064 & 4.07 \\
+\quad 96 vertices & \textbf{0.9151} & 3.74 & \quad Echo-aware + h-flip & 0.9095 & 3.95 \\
+\quad 32 vertices & 0.9105 & 3.83 & \textit{COCO pretraining} & & \\
+\textit{Encoding at 32 vertices} & & & \quad COCO-pretrained & \textbf{0.9151} & 3.74 \\
+\quad Filled, 32 vtx & 0.9105 & 3.83 & \quad From scratch & 0.9060 & 3.93 \\
+\quad Seam, 32 vtx & \textbf{0.9119} & 3.83 & \textit{Training data} & & \\
+\textit{Model scale / generation} & & & \quad ED/ES only (1.6k) & \textbf{0.9151} & 3.74 \\
+\quad YOLO26n-seg & \textbf{0.9151} & 3.74 & \quad + cycle frames (~20k) & 0.9054 & 4.06 \\
+\quad YOLO26s-seg & 0.9035 & 3.81 & \textit{Boundary-weighted loss} & & \\
+\quad YOLO26m-seg & 0.9135 & 3.82 & \quad $\lambda=0$ (stock) & \textbf{0.9151} & 3.74 \\
+\quad YOLO11n-seg & 0.9109 & 4.03 & \quad $\lambda=2$ & 0.9141 & 3.94 \\
+\quad YOLOv8n-seg & 0.9137 & 3.97 & \quad $\lambda=5$ & 0.9117 & 3.85 \\
+\textit{Input resolution} & & & \quad $\lambda=10$ & 0.9149 & 3.78 \\
+\quad 512 px & 0.9104 & 3.92 & \textit{Loss gains and optimiser} & & \\
+\quad 640 px & \textbf{0.9151} & 3.74 & \quad box $	imes$0.5 & \textbf{0.9153} & 3.79 \\
+\quad 800 px & 0.9056 & 3.77 & \quad box $	imes$2 & 0.9145 & 3.75 \\
+\quad 960 px & 0.9108 & 3.81 & \quad cls $	imes$2 & 0.9095 & 3.85 \\
+\textit{Mask prototype resolution} & & & \quad dfl $	imes$2 & 0.9120 & 3.81 \\
+\quad 1/4 resolution & \textbf{0.9151} & 3.74 & \quad AdamW & 0.9067 & 3.95 \\
+\quad 1/2 resolution & 0.9117 & 3.84 & \quad SGD & 0.9126 & 3.88 \\
+\quad full resolution & 0.9118 & 3.89 & \textit{Final configuration} & & \\
+ & & & \quad seed 0 & \textbf{0.9151} & 3.74 \\
+ & & & \quad seed 1 & 0.9064 & 3.87 \\
+ & & & \quad seed 2 & 0.9125 & 3.82 \\
+\bottomrule
+\end{tabular}
+\end{table}

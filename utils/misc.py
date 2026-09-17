@@ -28,8 +28,60 @@ def set_seed(seed: int = 42):
     torch.backends.cudnn.benchmark = False
     
     os.environ['PYTHONHASHSEED'] = str(seed)
-    
+
     print(f"Random seed set to {seed}")
+
+
+def pin_determinism(seed: int = 42, mode: str = "full") -> dict:
+    """Pin arithmetic precision and algorithm choice, and report what was set.
+
+    ``set_seed`` above pins the RNG and cuDNN's algorithm *selection*, but not
+    arithmetic *precision* -- and precision is the larger effect by far. TF32 is
+    on by default from Ampere onward; ablated on FPN-UNet in
+    ``results/hardware/ef_precision_ablation.json``, turning it off moved the
+    EF by 0.88 points, more than the gaps between adjacent architectures in the
+    leaderboard. cuDNN determinism accounted for none of the shift and
+    deterministic algorithms for 0.28 of it; TF32 was the whole remainder.
+
+    TF32 off is full FP32 and the more accurate computation, so it is what
+    ships. Training a session without this means its numbers are not comparable
+    to the pinned EF tables, and moving to a different GPU generation changes
+    the default -- which is exactly the confound this revision exists to remove.
+
+    Must be called before any CUDA work. ``mode`` mirrors
+    ``scripts/yolo/eval_baseline_ef.py`` so a flag can be ablated on its own;
+    ``full`` is the shipping configuration.
+    """
+    os.environ.setdefault('CUBLAS_WORKSPACE_CONFIG', ':4096:8')
+    os.environ.setdefault('PYTHONHASHSEED', str(seed))
+
+    set_seed(seed)
+
+    want_cudnn = mode in ('full', 'cudnn')
+    want_tf32 = mode in ('full', 'tf32')
+    want_algos = mode in ('full', 'algos')
+
+    torch.backends.cudnn.benchmark = not want_cudnn   # autotuning off when pinned
+    torch.backends.cudnn.deterministic = want_cudnn
+    torch.backends.cuda.matmul.allow_tf32 = not want_tf32
+    torch.backends.cudnn.allow_tf32 = not want_tf32
+
+    # warn_only: a few upsampling kernels have no deterministic implementation,
+    # and that must not abort a 100-epoch run.
+    torch.use_deterministic_algorithms(want_algos, warn_only=True)
+
+    return {
+        'mode': mode,
+        'seed': seed,
+        'cudnn_benchmark': torch.backends.cudnn.benchmark,
+        'cudnn_deterministic': torch.backends.cudnn.deterministic,
+        'tf32_matmul': torch.backends.cuda.matmul.allow_tf32,
+        'tf32_cudnn': torch.backends.cudnn.allow_tf32,
+        'cublas_workspace_config': os.environ['CUBLAS_WORKSPACE_CONFIG'],
+        'torch': torch.__version__,
+        'gpu': (torch.cuda.get_device_name(0)
+                if torch.cuda.is_available() else 'cpu'),
+    }
 
 
 def get_device(gpu_id: Optional[int] = None) -> torch.device:

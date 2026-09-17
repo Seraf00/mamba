@@ -48,3 +48,17 @@ paper/**/*.out
 paper/**/*.fls
 paper/**/*.fdb_latexmk
 paper/**/*.synctex.gz
+
+# YOLO experiments (Paper 2)
+yolo_data/
+yolo_runs/
+*.pt
+paper2/build.log
+paper2/main.pdf
+paper2/*.aux
+paper2/*.bbl
+paper2/*.blg
+paper2/*.fdb_latexmk
+paper2/*.fls
+paper2/*.log
+paper2/*.out

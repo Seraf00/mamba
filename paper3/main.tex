@@ -1,0 +1,131 @@
+%==============================================================================
+% Paper 3 -- journal-length extension of the ISBI paper (paper2/).
+%
+% Target: Computers in Biology and Medicine (Elsevier), single column, ~12-16 pp.
+% Framing: a reproducibility and benchmarking study. The central result is
+% negative -- across ~50 training runs and thirteen factors, nothing improves on
+% a stock configuration once run-to-run variance is measured -- and the
+% methodological findings (seed noise invalidating single-seed ablations; a
+% latent contour-selection fault in the official CAMUS EF code; a volume-scale
+% error that silently changes published EF) are the contribution.
+%
+% Build:  latexmk -pdf main.tex
+%
+% Tables and figures regenerate from the run artefacts:
+%   python scripts/yolo/aggregate_results.py
+%   python scripts/yolo/make_figures.py
+%==============================================================================
+\documentclass[review,1p,times]{elsarticle}
+
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{makecell}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+\usepackage{subcaption}
+
+\newcommand{\TODO}[1]{\textcolor{red}{\textbf{[TODO: #1]}}}
+
+\graphicspath{{figures/}}
+\journal{Computers in Biology and Medicine}
+\bibliographystyle{elsarticle-num}
+
+\begin{document}
+
+\begin{frontmatter}
+
+\title{What actually moves boundary error in echocardiographic segmentation?\\
+A reproducibility study of real-time instance segmentation on CAMUS}
+
+\author[a]{\TODO{Author names}}
+\address[a]{\TODO{Affiliation}}
+
+\begin{abstract}
+Deep segmentation networks report mean Dice above $0.90$ on the CAMUS
+echocardiography benchmark, at or beyond the level at which two cardiologists
+agree with one another. We ask what, if anything, still improves boundary
+accuracy in that regime, using real-time instance segmentation as the test bed.
+
+Applying a detector to CAMUS first requires resolving a representational
+obstacle: the myocardium is an annulus, and an instance mask is supervised as a
+single closed polygon, which has no hole. We encode the epicardium as a filled
+contour and recover the myocardium by subtraction, and quantify what any such
+encoding can express as an explicit \emph{ceiling} --- a perfect model under it
+attains $0.997$ Dice at $0.308$\,mm HD95, exactly one pixel.
+
+We then run thirteen factors over roughly fifty training runs on a single
+consumer GPU: encoding, vertex budget, model scale and generation, input
+resolution, mask-prototype resolution, augmentation, pretraining, training-set
+size, a boundary-weighted loss, the loss gains, and the optimiser. Critically,
+we first measure run-to-run variance. Three seeds of one configuration span
+$0.134$\,mm HD95, and a paired Wilcoxon test over the 200-frame test set calls
+that difference significant ($p{=}0.035$). Read against that floor,
+\emph{no factor improves on a stock configuration}. What does register is
+training-side: removing augmentation costs $0.318$\,mm, and COCO initialisation
+is worth $0.183$\,mm.
+
+Averaged over three seeds the resulting model reaches $3.809$\,mm HD95 at
+$2.7$\,M parameters --- the best in the benchmark, ahead of the strongest
+baseline by $0.271$\,mm, twice the measured seed floor --- with mean Dice
+$0.9113$, which is statistically indistinguishable from the four leading
+baselines. It is near-invariant to input resolution where encoder--decoders
+scale $4$--$8\times$ with pixel count.
+
+Three findings generalise beyond this architecture. Overlap has saturated on
+CAMUS, so boundary distance in millimetres is what discriminates methods.
+Single-seed ablations on this benchmark produce false positives. And the
+reference implementation for CAMUS ejection fraction selects a contour by
+position rather than area, which is harmless on ground truth but drives EF
+correlation from $r{=}0.911$ to $r{=}0.030$ on model predictions. All code, the
+machine-readable experiment plan and every run artefact are released.
+\end{abstract}
+
+\begin{keyword}
+Echocardiography \sep cardiac segmentation \sep reproducibility \sep
+benchmarking \sep instance segmentation \sep ejection fraction
+\end{keyword}
+
+\end{frontmatter}
+
+\input{sections/01_introduction}
+\input{sections/02_related_work}
+\input{sections/03_methods}
+\input{sections/04_results}
+\input{sections/05_discussion}
+\input{sections/06_conclusion}
+
+\section*{Data and code availability}
+CAMUS is publicly available from the original authors. All code, the
+machine-readable experiment plan, per-run artefacts and the scripts that
+regenerate every table and figure in this paper are released at
+\TODO{repository URL}.
+
+\section*{Relationship to other work by the authors}
+A preliminary version of this study appeared as a four-page conference
+submission, which reported the encoding ceiling, the seed noise floor and a
+subset of the ablation grid. The present paper adds the native-resolution
+latency protocol, the ejection-fraction analysis against a ground-truth oracle,
+the connected-component fault in the reference Simpson implementation, the full
+thirteen-factor grid, and per-patient rather than per-frame significance
+testing. Results common to both are reported identically.
+
+\section*{Declaration of competing interest}
+The authors declare no competing interests.
+
+\section*{Declaration of Generative AI and AI-assisted technologies in the
+writing process}
+During the preparation of this work the authors used a large language model to
+assist with drafting and copy-editing of the manuscript text, and with
+implementation and refactoring of the released analysis code. After using this
+tool, the authors reviewed and edited the content as needed and take full
+responsibility for the content of the published article.
+
+\section*{Acknowledgements}
+\TODO{funding statement}
+
+\bibliography{references}
+
+\end{document}

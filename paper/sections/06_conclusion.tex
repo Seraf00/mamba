@@ -13,8 +13,10 @@ parameter / FLOPs / latency efficiency, and Bonferroni-corrected
 pairwise statistical significance.
 
 The hybrid TransUNet leads on bulk Dice ($0.9121$) and HD95
-($4.08$~mm). The pure-CNN nnU-Net leads on EF accuracy
-(MAE $5.52\%$, $r = 0.828$) and is $6.5\times$ more parameter-efficient.
+($4.08$~mm). UNet-V1 leads on EF accuracy (MAE $6.62\%$),
+narrowly ahead of TransUNet at $7.36\%$, which in turn holds the
+highest EF correlation; nnU-Net is mid-table on EF at $8.32\%$ while
+remaining $6.5\times$ more parameter-efficient than the best-Dice model.
 The top four architectures (TransUNet, nnU-Net, UNet-ResNet, UNet-V1)
 form a statistically equivalent top-tier band. The pure-Transformer
 Swin-UNet is mid-tier on bulk Dice but degraded on EF, suggesting that
@@ -22,13 +24,16 @@ its contours are subtly biased in a manner that compounds through
 Simpson's biplane integration.
 
 Boundary accuracy under the unified protocol ($4.08$--$4.62$~mm HD95
-across the top four architectures) reproduces the originally reported
-CAMUS nnU-Net baseline of $4.3$~mm rather than improving on it, while EF
-error falls from the $\sim$$9\%$ originally reported to $5.52\%$. We read
-this as a useful calibration point for cross-paper comparison: on CAMUS,
-a decade of protocol modernisation is visible in the downstream clinical
-quantity but not in the contour itself, which appears to be approaching
-the ceiling set by annotation variability.
+across the top four architectures) reproduces the originally reported CAMUS
+nnU-Net baseline of $4.3$~mm rather than improving on it, and EF behaves the
+same way once computed at native resolution: $8.32\%$ for the reproduced
+nnU-Net against the $\sim$$9\%$ originally reported. We read this as a useful
+calibration point for cross-paper comparison, and a deflationary one: on
+CAMUS, a decade of protocol modernisation is visible in neither the contour
+nor the derived clinical quantity. The contour appears to be approaching the
+ceiling set by annotation variability, and EF is bounded at $5.44\%$ by the
+biplane estimator applied to perfect masks --- a floor the best architecture
+misses by $1.2$ points and the worst by $5.2$.
 
 Three directions remain open. (i) Cross-dataset transfer to
 EchoNet-Dynamic and ACDC would test whether the architectural ranking

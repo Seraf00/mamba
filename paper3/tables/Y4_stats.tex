@@ -1,0 +1,24 @@
+%============================================================================
+% Y4 -- paired Wilcoxon signed-rank tests (auto-generated)
+%============================================================================
+\begin{table}[t]
+\centering
+\caption{Paired Wilcoxon on mean Dice, final configuration averaged over 3 seeds, tested over the $50$ patients not the $200$ frames. $\Delta$ is mean Dice (YOLO $-$ baseline); $p$ Holm-corrected.}
+\label{tab:stats}
+\small
+\begin{tabular}{l c c c}
+\toprule
+Baseline & $\Delta$ Dice & $W$ & $p$ \\
+\midrule
+TransUNet              & -0.0008 & 589 & 0.646 \\
+nnU-Net                & +0.0014 & 491 & 0.480 \\
+UNet-V1                & +0.0028 & 434 & 0.198 \\
+UNet-ResNet            & +0.0032 & 494 & 0.480 \\
+UNet-V2                & +0.0150 & 126 & $<$0.001$^{*}$ \\
+Swin-UNet              & +0.0231 & 54 & $<$0.001$^{*}$ \\
+DeepLabV3+             & +0.0511 & 1 & $<$0.001$^{*}$ \\
+FPN-UNet               & +0.0517 & 0 & $<$0.001$^{*}$ \\
+DenseContextU-Net      & +0.0608 & 0 & $<$0.001$^{*}$ \\
+\bottomrule
+\end{tabular}
+\end{table}

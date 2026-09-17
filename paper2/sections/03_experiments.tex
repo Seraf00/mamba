@@ -1,0 +1,83 @@
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{How large an effect is measurable?}
+\label{sec:noise}
+
+Before interpreting any ablation we establish the noise floor, because it
+dominates the interpretation. Three seeds of one configuration span
+$0.134$\,mm in HD95 and $0.009$ in Dice, and the number of frames on which a
+structure is missed entirely swings from 1 to 6. A paired Wilcoxon test between
+two such runs -- identical except for the seed -- returns $p{=}0.035$ on HD95.
+
+A significance test over 200 frames is therefore powerful enough to certify pure
+seed variation as a real effect. We treat $0.134$\,mm as the smallest credible
+difference and report every comparison against it; several published CAMUS
+comparisons report differences smaller than this. Individual runs are otherwise
+bit-reproducible: two independent trainings of one configuration gave per-frame
+Dice identical to machine precision.
+
+\subsection{Encoding ceiling}
+
+Table~\ref{tab:ceiling} gives the ceiling against the vertex budget $n$. The
+filled decomposition is effectively lossless at a modest budget: at $n{=}96$ it
+reaches $0.9970$ Dice and $0.308$\,mm HD95, exactly one pixel at the CAMUS
+spacing. The encodings differ only on the raw class-2 target -- at $n{=}32$,
+$0.9953$ against $0.9671$ -- since Eq.~\ref{eq:decomp} re-carves the hole either
+way.
+
+\input{tables/Y3_ceiling}
+
+\subsection{Ablations}
+
+We vary one factor at a time about the default; Table~\ref{tab:ablation}
+collects the results. Two findings organise everything else.
+
+\textbf{Overlap is saturated; boundary distance is not.} Over $32$
+configurations Dice spans $0.9035$--$0.9177$, HD95 $3.70$--$4.07$\,mm. By SD,
+Dice varies \emph{less} across configurations than across seeds ($0.0037$ vs
+$0.0045$); HD95 varies $1.5\times$ more.
+
+\textbf{No capacity knob helps.} Model scale ($2.7$ to $27$\,M parameters),
+input resolution ($512$ to $960$\,px) and mask-prototype resolution all fail to
+beat the noise floor; full-resolution prototypes are significantly \emph{worse}
+($+0.157$\,mm, $p{=}0.008$) at $3.5\times$ the training cost, consistent with
+over-parameterising the mask path on 1600 images. Nor does more data: the full
+annotated cardiac cycle ($10.6\times$ the frames) does not improve ED/ES
+accuracy, the added frames being highly correlated with the extremes they
+interpolate. What does matter is training-side -- removing augmentation costs
+$0.318$\,mm ($p{<}0.001$) and COCO initialisation is worth $0.183$\,mm
+($p{=}0.009$), despite grayscale ultrasound resembling nothing in COCO.
+Re-weighting the mask loss toward the contour does not help either, and at its
+mildest setting is significantly harmful ($+0.216$\,mm, $p{<}0.001$) --
+plausibly because the contour is where the reference labels are least reliable.
+Nor do the loss gains or the optimiser: scaling the segmentation, classification
+or distribution-focal weight, and substituting AdamW or SGD for the
+automatically selected optimiser, all leave HD95 inside the noise floor (0 of 6
+arms better, $p{\geq}0.06$); doubling the segmentation weight moves it by
+$0.001$\,mm.
+
+\input{tables/Y2_ablation}
+
+\textbf{The annulus is a non-problem in practice.} Neither encoding nor vertex
+budget produces a measurable difference: filled versus seam at 96 vertices
+($p{=}0.87$), 96 versus 32 vertices ($p{=}0.31$), and filled versus seam at 32
+vertices ($p{=}0.34$). The last is a genuine falsification: the ceiling predicts
+a $0.228$\,mm penalty there, which exceeds the noise floor and should have been
+visible, yet the observed difference is $0.019$\,mm with the opposite sign.
+\emph{The ceiling is a valid upper bound but not a predictor of trained-model
+differences} -- a $0.2$\,mm representational penalty is invisible when model
+error is $3.7$\,mm. We recommend the filled decomposition because it is simpler,
+not because it scores better.
+
+\subsection{Detection reliability is a separate axis}
+
+A detector can decline to emit an instance, leaving a structure with no contour
+-- a failure mode semantic segmentation cannot have. It dominates Dice computed
+over all frames: in one comparison an apparent $0.0116$ Dice deficit was traced
+entirely to nine dropped instances, the two models being identical ($p{=}0.72$)
+on frames where both detected everything. It is also the most seed-sensitive
+quantity we measured, and it is \emph{eliminable}: lowering the confidence
+threshold from the default $0.25$ to $0.10$ removes every miss (0 of 200) while
+leaving Dice and HD95 unchanged. Where every structure is known a priori to be
+present, the usual precision--recall trade does not apply.

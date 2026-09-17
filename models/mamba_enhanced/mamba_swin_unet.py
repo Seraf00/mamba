@@ -131,9 +131,11 @@ class SwinMambaBlock(nn.Module):
         mamba_type: str = 'vmamba',
         d_state: int = 16,
         drop: float = 0.0,
-        attn_drop: float = 0.0
+        attn_drop: float = 0.0,
+        use_mamba: bool = True
     ):
         super().__init__()
+        self.use_mamba = use_mamba
         self.dim = dim
         self.num_heads = num_heads
         self.window_size = window_size
@@ -160,18 +162,21 @@ class SwinMambaBlock(nn.Module):
             nn.Dropout(drop)
         )
         
-        # Mamba for global context
-        self.mamba = create_mamba_block(
-            variant=mamba_type,
-            dim=dim,
-            d_state=d_state
-        )
-        
-        # Fusion gate
-        self.gate = nn.Sequential(
-            nn.Linear(dim * 2, dim),
-            nn.Sigmoid()
-        )
+        # Mamba for global context. Dropped when this position is ablated,
+        # and the fusion gate goes with it -- with only one path left there is
+        # nothing to gate, and the block reduces to a standard Swin block.
+        if use_mamba:
+            self.mamba = create_mamba_block(
+                variant=mamba_type,
+                dim=dim,
+                d_state=d_state
+            )
+
+            # Fusion gate
+            self.gate = nn.Sequential(
+                nn.Linear(dim * 2, dim),
+                nn.Sigmoid()
+            )
     
     def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         B, H, W, C = x.shape
@@ -203,15 +208,18 @@ class SwinMambaBlock(nn.Module):
         else:
             attn_out = shifted_x
         
-        # Mamba path (process in channel-first format)
-        x_mamba = x_norm.permute(0, 3, 1, 2).contiguous()  # B, C, H, W
-        mamba_out = self.mamba(x_mamba)
-        mamba_out = mamba_out.permute(0, 2, 3, 1).contiguous()  # B, H, W, C
-        
-        # Gated fusion
-        combined = torch.cat([attn_out, mamba_out], dim=-1)
-        gate = self.gate(combined)
-        x = residual + gate * attn_out + (1 - gate) * mamba_out
+        if self.use_mamba:
+            # Mamba path (process in channel-first format)
+            x_mamba = x_norm.permute(0, 3, 1, 2).contiguous()  # B, C, H, W
+            mamba_out = self.mamba(x_mamba)
+            mamba_out = mamba_out.permute(0, 2, 3, 1).contiguous()  # B, H, W, C
+
+            # Gated fusion
+            combined = torch.cat([attn_out, mamba_out], dim=-1)
+            gate = self.gate(combined)
+            x = residual + gate * attn_out + (1 - gate) * mamba_out
+        else:
+            x = residual + attn_out
         
         # MLP
         x = x + self.mlp(self.norm2(x))
@@ -302,10 +310,11 @@ class MambaSwinEncoder(nn.Module):
         window_size: int = 7,
         mamba_type: str = 'vmamba',
         d_state: int = 16,
-        downsample: bool = True
+        downsample: bool = True,
+        use_mamba: bool = True
     ):
         super().__init__()
-        
+
         self.blocks = nn.ModuleList([
             SwinMambaBlock(
                 dim=dim,
@@ -313,7 +322,8 @@ class MambaSwinEncoder(nn.Module):
                 window_size=window_size,
                 shift_size=0 if (i % 2 == 0) else window_size // 2,
                 mamba_type=mamba_type,
-                d_state=d_state
+                d_state=d_state,
+                use_mamba=use_mamba
             )
             for i in range(depth)
         ])
@@ -342,10 +352,11 @@ class MambaSwinDecoder(nn.Module):
         window_size: int = 7,
         mamba_type: str = 'vmamba',
         d_state: int = 16,
-        upsample: bool = True
+        upsample: bool = True,
+        use_mamba: bool = True
     ):
         super().__init__()
-        
+
         self.upsample = PatchExpanding(dim * 2) if upsample else None
         
         # Concatenation projection
@@ -358,11 +369,12 @@ class MambaSwinDecoder(nn.Module):
                 window_size=window_size,
                 shift_size=0 if (i % 2 == 0) else window_size // 2,
                 mamba_type=mamba_type,
-                d_state=d_state
+                d_state=d_state,
+                use_mamba=use_mamba
             )
             for i in range(depth)
         ])
-    
+
     def forward(self, x: torch.Tensor, skip: Optional[torch.Tensor] = None) -> torch.Tensor:
         if self.upsample is not None:
             x = self.upsample(x)
@@ -419,10 +431,21 @@ class MambaSwinUNet(nn.Module):
         mamba_type: Literal['mamba', 'mamba2', 'vmamba'] = 'vmamba',
         d_state: int = 16,
         pretrained: bool = False,  # Ignored, included for API compatibility
+        mamba_in_encoder: bool = True,
+        mamba_in_decoder: bool = True,
+        mamba_in_bottleneck: bool = True,
         **kwargs  # Ignore other unknown arguments
     ):
         super().__init__()
-        
+
+        # Which SSM positions this instance carries; persisted by the trainer
+        # so the ablation table is generated from the checkpoint, not the name.
+        self.mamba_positions = tuple(
+            p for p, on in (('encoder', mamba_in_encoder),
+                            ('decoder', mamba_in_decoder),
+                            ('bottleneck', mamba_in_bottleneck)) if on)
+        self.mamba_in_bottleneck = mamba_in_bottleneck
+
         self.num_stages = len(depths)
         self.embed_dim = embed_dim
         self.mamba_type = mamba_type
@@ -446,18 +469,20 @@ class MambaSwinUNet(nn.Module):
                     window_size=window_size,
                     mamba_type=mamba_type,
                     d_state=d_state,
-                    downsample=(i < self.num_stages - 1)
+                    downsample=(i < self.num_stages - 1),
+                    use_mamba=mamba_in_encoder
                 )
             )
         
         # Bottleneck with enhanced Mamba
         bottleneck_dim = embed_dim * (2 ** (self.num_stages - 1))
-        self.bottleneck = MambaBottleneck(
-            dim=bottleneck_dim,
-            mamba_type=mamba_type,
-            depth=2,
-            d_state=d_state
-        )
+        if mamba_in_bottleneck:
+            self.bottleneck = MambaBottleneck(
+                dim=bottleneck_dim,
+                mamba_type=mamba_type,
+                depth=2,
+                d_state=d_state
+            )
         
         # Decoder stages
         self.decoders = nn.ModuleList()
@@ -470,7 +495,8 @@ class MambaSwinUNet(nn.Module):
                     num_heads=num_heads[i - 1],
                     window_size=window_size,
                     mamba_type=mamba_type,
-                    d_state=d_state
+                    d_state=d_state,
+                    use_mamba=mamba_in_decoder
                 )
             )
         
@@ -519,7 +545,8 @@ class MambaSwinUNet(nn.Module):
         
         # Bottleneck (convert to B, C, H, W)
         x = x.permute(0, 3, 1, 2).contiguous()
-        x = self.bottleneck(x)
+        if self.mamba_in_bottleneck:
+            x = self.bottleneck(x)
         x = x.permute(0, 2, 3, 1).contiguous()
         
         # Decoder

@@ -37,10 +37,13 @@ class MambaChannelAttention(nn.Module):
         in_channels: int,
         reduction: int = 16,
         mamba_type: str = 'vmamba',
-        d_state: int = 16
+        d_state: int = 16,
+        use_mamba: bool = True
     ):
         super().__init__()
-        
+
+        self.use_mamba = use_mamba
+
         # Standard channel attention path
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.max_pool = nn.AdaptiveMaxPool2d(1)
@@ -52,11 +55,12 @@ class MambaChannelAttention(nn.Module):
         )
         
         # Mamba path for global context
-        self.mamba = create_mamba_block(
-            variant=mamba_type,
-            dim=in_channels,
-            d_state=d_state
-        )
+        if use_mamba:
+            self.mamba = create_mamba_block(
+                variant=mamba_type,
+                dim=in_channels,
+                d_state=d_state
+            )
         
         # Fusion
         self.sigmoid = nn.Sigmoid()
@@ -69,10 +73,11 @@ class MambaChannelAttention(nn.Module):
         max_out = self.fc(self.max_pool(x).view(B, C))
         channel_attn = self.sigmoid(avg_out + max_out).view(B, C, 1, 1)
         
-        # Mamba global context
+        # Apply channel attention, plus the Mamba residual when the encoder
+        # position is active; otherwise this is plain SE-style attention.
+        if not self.use_mamba:
+            return x * channel_attn
         mamba_out = self.mamba(x)
-        
-        # Apply channel attention and add Mamba residual
         return x * channel_attn + 0.1 * mamba_out
 
 
@@ -199,21 +204,25 @@ class MambaDenseSkip(nn.Module):
         channels_list: List[int],
         out_channels: int,
         mamba_type: str = 'vmamba',
-        d_state: int = 16
+        d_state: int = 16,
+        use_mamba: bool = True
     ):
         super().__init__()
-        
+
+        self.use_mamba = use_mamba
+
         # Project each skip to common channel
         self.projections = nn.ModuleList([
             nn.Conv2d(ch, out_channels, 1) for ch in channels_list
         ])
         
         # Mamba for fused features
-        self.mamba = create_mamba_block(
-            variant=mamba_type,
-            dim=out_channels,
-            d_state=d_state
-        )
+        if use_mamba:
+            self.mamba = create_mamba_block(
+                variant=mamba_type,
+                dim=out_channels,
+                d_state=d_state
+            )
         
         # Final fusion
         self.fusion = nn.Sequential(
@@ -227,7 +236,8 @@ class MambaDenseSkip(nn.Module):
         for feat, proj in zip(features, self.projections):
             feat = proj(feat)
             feat = F.interpolate(feat, size=target_size, mode='bilinear', align_corners=True)
-            feat = feat + self.mamba(feat)  # Mamba refinement
+            if self.use_mamba:
+                feat = feat + self.mamba(feat)  # Mamba refinement
             projected.append(feat)
         
         return self.fusion(torch.cat(projected, dim=1))
@@ -261,10 +271,21 @@ class MambaDenseContextUNet(nn.Module):
         growth_rate: int = 32,
         num_layers_per_block: List[int] = [4, 4, 4, 4],
         mamba_type: Literal['mamba', 'mamba2', 'vmamba'] = 'vmamba',
-        d_state: int = 16
+        d_state: int = 16,
+        mamba_in_encoder: bool = True,
+        mamba_in_skip: bool = True,
+        mamba_in_bottleneck: bool = True
     ):
         super().__init__()
-        
+
+        # Which SSM positions this instance carries; persisted by the trainer
+        # so the ablation table is generated from the checkpoint, not the name.
+        self.mamba_positions = tuple(
+            p for p, on in (('encoder', mamba_in_encoder),
+                            ('skip', mamba_in_skip),
+                            ('bottleneck', mamba_in_bottleneck)) if on)
+        self.mamba_in_bottleneck = mamba_in_bottleneck
+
         self.in_channels = in_channels
         self.num_classes = num_classes
         self.mamba_type = mamba_type
@@ -288,7 +309,9 @@ class MambaDenseContextUNet(nn.Module):
         
         for i, num_layers in enumerate(num_layers_per_block):
             # Dense block (Mamba in deeper blocks)
-            use_mamba = i >= num_blocks // 2
+            # The original heuristic put Mamba in the second half of the
+            # encoder only; the encoder-position flag gates that wholesale.
+            use_mamba = mamba_in_encoder and (i >= num_blocks // 2)
             block = DenseBlock(
                 current_channels,
                 growth_rate,
@@ -307,7 +330,8 @@ class MambaDenseContextUNet(nn.Module):
                 MambaChannelAttention(
                     current_channels,
                     mamba_type=mamba_type,
-                    d_state=d_state
+                    d_state=d_state,
+                    use_mamba=mamba_in_encoder
                 )
             )
             
@@ -322,7 +346,7 @@ class MambaDenseContextUNet(nn.Module):
             encoder_channels[-1],
             mamba_type=mamba_type,
             d_state=d_state,
-            num_mamba_layers=2
+            num_mamba_layers=2 if mamba_in_bottleneck else 0
         )
         
         # Decoder with dense skip connections
@@ -346,7 +370,8 @@ class MambaDenseContextUNet(nn.Module):
                     [encoder_channels[j] for j in range(num_blocks - i)],
                     out_ch,
                     mamba_type=mamba_type,
-                    d_state=d_state
+                    d_state=d_state,
+                    use_mamba=mamba_in_skip
                 )
             )
             

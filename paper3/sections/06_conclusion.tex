@@ -1,0 +1,44 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+We set out to determine what still improves boundary accuracy on a cardiac
+ultrasound benchmark whose overlap metric has reached the level of annotator
+agreement, using real-time instance segmentation as the test bed.
+
+The representational obstacle we expected to matter does not. The CAMUS
+myocardium is an annulus and an instance mask is a polygon, but encoding the
+epicardium as a filled contour and recovering the myocardium by subtraction
+costs one pixel of Hausdorff distance, and no encoding or vertex budget we
+tested produces a measurable difference in a trained model. The encoding ceiling
+is a valid upper bound; it is not a predictor.
+
+Nor does anything else. Across thirteen factors and roughly fifty training runs
+--- capacity, generation, input resolution, mask-prototype resolution,
+augmentation recipe, pretraining, data scale, a boundary-weighted loss, the
+three loss gains and the optimiser --- no configuration change improves on a
+stock setting once run-to-run variance is measured. The two factors that do
+register, augmentation and initialisation, both concern the information
+available to the model rather than its capacity. The resulting configuration
+reaches $0.9113$ seed-mean Dice and $3.809$\,mm HD95 at $2.7$\,M parameters:
+the best boundary accuracy in the benchmark, with overlap indistinguishable from
+the leading baselines. It is near-invariant to input resolution where
+encoder--decoders scale with pixel count.
+
+Three findings generalise beyond this architecture. Overlap has saturated on
+CAMUS, so boundary distance in millimetres is what discriminates methods and
+reporting Dice alone conceals most of what an ablation reveals. A paired test
+over a 200-frame test set certifies pure seed variation as significant, so
+single-seed ablations on benchmarks of this size produce false positives. And
+the reference implementation for CAMUS ejection fraction selects a contour by
+position rather than area --- harmless on ground truth, ruinous on predictions.
+
+Taken together these point to the annotations as the operative limit on
+in-distribution accuracy, supported by three converging observations: mean Dice
+already exceeds inter-observer agreement, weighting the loss toward the contour
+is actively harmful, and perfect segmentation still leaves most of the ejection
+fraction error intact. If that reading is right, the productive questions are no
+longer about architecture on this dataset. They are about generalisation across
+scanners and centres, about temporal consistency across the cardiac cycle --- a
+supervision signal a per-frame model discards --- and about whether the
+benchmark's reference standard can support the precision that current methods
+are already reporting against it.

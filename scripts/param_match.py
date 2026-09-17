@@ -49,9 +49,8 @@ def count_params(model):
 # Per-model widening search space. Each entry is a list of kwargs dicts to try.
 # - Models with a ``base_features`` knob get a continuous sweep.
 # - Pretrained-encoder models get a discrete backbone tier sweep.
-# - Models tied to a fixed pretrained Transformer (Swin-Tiny / ViT-B/16) cannot
-#   be honestly param-matched by widening — changing dims forfeits the
-#   pretrained weights. We mark those ``None`` and report ``N/A`` in the table.
+# - Transformer models widen along the one axis that keeps their pretrained
+#   weights loadable (see ``_TRANSUNET_SWEEP`` below).
 
 _BF_SWEEP = [{'base_features': bf} for bf in
              sorted(set(list(range(32, 257, 8)) +
@@ -59,6 +58,21 @@ _BF_SWEEP = [{'base_features': bf} for bf in
 
 # resnet50 ~ 25M params, resnet101 ~ 44M, resnet152 ~ 60M
 _RESNET_BACKBONES = ['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152']
+
+# TransUNet widens by DEPTH, not width. Width (vit_dim) would land just as close
+# on parameters -- vit_dim=1128 is -0.56% against depth's -0.44% -- but it makes
+# every ViT-B/16 tensor the wrong shape, so the control would be a randomly
+# initialised transformer competing against a pretrained one and the extra
+# parameters would not be what the comparison measured. Depth keeps the first 12
+# blocks pretrained and adds fresh ones, which is how the Mamba variant adds its
+# capacity too. It also leaves head_dim at 64, so the control does not perturb
+# the head-dimension analysis behind the Mamba-2 shared-memory ceiling.
+_TRANSUNET_SWEEP = [{'vit_layers': n} for n in range(12, 41)]
+
+# SwinUNet's embed_dim must be divisible by 6: by 3 for the [3,6,12,24] head
+# counts over dims embed_dim*[1,2,4,8], and by 2 again for PatchExpanding's
+# (p1 p2 c) rearrange. 111 and 117 satisfy the first and fail the second.
+_SWIN_SWEEP = [{'embed_dim': d} for d in range(96, 199, 6)]
 
 WIDEN_SEARCH_SPACE = {
     # Continuous-width models
@@ -68,29 +82,60 @@ WIDEN_SEARCH_SPACE = {
     'dense_context_unet': _BF_SWEEP,
     # Discrete pretrained-CNN backbones
     'unet_resnet':        [{'backbone': b} for b in _RESNET_BACKBONES],
+    # fpn_channels used to stop at 512, which capped the search at 75.1M against
+    # a 173.1M target and produced the "APPROX" row that missed by 57%.
     'fpn':                [{'backbone': b, 'fpn_channels': fpn}
                            for b in _RESNET_BACKBONES
-                           for fpn in (128, 256, 384, 512)],
+                           for fpn in (128, 256, 384, 512, 768, 896,
+                                       1024, 1152, 1280)],
     'deeplab_v3':         [{'backbone': 'resnet50'}, {'backbone': 'resnet101'}],
-    # Pretrained-Transformer models — widening forfeits pretrained weights
-    'swin_unet':          None,
-    'transunet':          None,
+    # Pretrained-Transformer models
+    'swin_unet':          _SWIN_SWEEP,
+    'transunet':          _TRANSUNET_SWEEP,
 }
 
+# Below this parameter increase there is nothing for a widened control to
+# control for: the question "is the gain from the extra parameters?" has the
+# answer "there are no meaningful extra parameters". nnU-Net's Mamba variant is
+# actually SMALLER than its baseline (-1.9%), and DeepLabV3+'s is +4.1%. Training
+# a "wide" arm for those burns GPU hours to produce a model that is identical to
+# the baseline, which is exactly what the previous param_config did for three of
+# its seven entries.
+MIN_INCREASE_PCT_FOR_CONTROL = 15.0
 
-def find_matched_widening(base_name, target_params_m):
+
+def _build_kwargs(base_name, trial_kwargs):
+    """Kwargs for a parameter-count probe.
+
+    ``pretrained=False`` because the count is identical either way and the
+    alternative is re-downloading ViT-B/16 once per trial -- 29 times for the
+    TransUNet depth sweep alone. SwinUNet is a fixed 224 px model.
+    """
+    kw = {'in_channels': 1, 'num_classes': 4, 'pretrained': False, **trial_kwargs}
+    if base_name == 'swin_unet':
+        kw.setdefault('img_size', 224)
+    return kw
+
+
+def find_matched_widening(base_name, target_params_m, base_params_m=None):
     """
     Search the per-model widening space for the kwargs that give the param
     count closest to ``target_params_m``.
 
     Returns (kwargs_dict_or_None, actual_params_M, status_str). ``status_str``
-    is one of ``'OK'`` (within 10%), ``'APPROX'`` (best-effort), or ``'N/A'``
-    (model is tied to fixed pretrained weights and cannot be widened cleanly).
+    is one of ``'OK'`` (within 10%), ``'APPROX'`` (best-effort), ``'N/A'`` (no
+    widening axis for this model), or ``'UNNEEDED'`` (the Mamba variant adds
+    too few parameters for a widened control to answer anything).
     """
     space = WIDEN_SEARCH_SPACE.get(base_name)
     if space is None:
-        # Pretrained-Transformer model — no honest widening
         return None, 0.0, 'N/A'
+
+    # A control only earns its GPU hours if there is a parameter gap to explain.
+    if base_params_m:
+        increase = (target_params_m - base_params_m) / base_params_m * 100
+        if increase < MIN_INCREASE_PCT_FOR_CONTROL:
+            return None, 0.0, 'UNNEEDED'
 
     best_kwargs = None
     best_diff = float('inf')
@@ -98,8 +143,7 @@ def find_matched_widening(base_name, target_params_m):
 
     for trial_kwargs in space:
         try:
-            full_kwargs = {'in_channels': 1, 'num_classes': 4, **trial_kwargs}
-            model = get_model(base_name, **full_kwargs)
+            model = get_model(base_name, **_build_kwargs(base_name, trial_kwargs))
             params = count_params(model)
             diff = abs(params - target_params_m)
 
@@ -110,12 +154,19 @@ def find_matched_widening(base_name, target_params_m):
 
             del model
         except Exception:
-            # Some kwarg combos may be invalid (e.g. encoder/fpn mismatch);
-            # skip and keep searching the rest of the space.
+            # Some kwarg combos may be invalid (e.g. encoder/fpn mismatch, or a
+            # SwinUNet embed_dim the PatchExpanding rearrange rejects); skip and
+            # keep searching the rest of the space.
             continue
 
     if best_kwargs is None:
         return None, 0.0, 'N/A'
+
+    # A "widening" that reproduces the model's own defaults is not a control --
+    # it is the baseline under a second name. That is what shipped for
+    # unet_resnet (resnet34), deeplab_v3 (resnet50) and nnunet (bf=32).
+    if base_params_m and abs(best_params - base_params_m) < 1e-6:
+        return None, best_params, 'UNNEEDED'
 
     err_pct = (best_diff / target_params_m) * 100 if target_params_m > 0 else 0
     status = 'OK' if err_pct < 10 else 'APPROX'
@@ -177,14 +228,16 @@ def main():
 
             # Find parameter-matched widened baseline
             matched_kwargs, matched_params, status = find_matched_widening(
-                base_name, mamba_params
+                base_name, mamba_params, base_params
             )
 
             label = _kwargs_label(matched_kwargs)
-            if status == 'N/A':
+            if status in ('N/A', 'UNNEEDED'):
+                why = ('no widening axis' if status == 'N/A'
+                       else f'only {increase_pct:+.1f}% to explain')
                 print(f"{base_name:<20} {base_params:>10.2f}M  {mamba_params:>10.2f}M  "
-                      f"{increase_pct:>+8.1f}%   {'N/A (pretrained-tied)':<28} "
-                      f"{'—':>16}  (N/A)")
+                      f"{increase_pct:>+8.1f}%   {status + ' (' + why + ')':<28} "
+                      f"{'-':>16}")
             else:
                 print(f"{base_name:<20} {base_params:>10.2f}M  {mamba_params:>10.2f}M  "
                       f"{increase_pct:>+8.1f}%   {label:<28} "
@@ -218,9 +271,15 @@ def main():
         config = {
             'mamba_type': args.mamba_type,
             'models': results,
-            # Only emit training entries for models we can actually widen.
-            # Models marked N/A (pretrained-Transformer) are documented in the
-            # paper as "param-matching not applicable" rather than retrained.
+            'min_increase_pct_for_control': MIN_INCREASE_PCT_FOR_CONTROL,
+            # Only emit training entries for models that can be widened AND
+            # where a widened control answers something. N/A means no widening
+            # axis exists; UNNEEDED means the Mamba variant adds under
+            # MIN_INCREASE_PCT_FOR_CONTROL, so the baseline already IS the
+            # control. Both are reported in the paper as a sentence rather than
+            # trained -- which is the difference between this config and the one
+            # it replaces, where three of seven entries silently reproduced the
+            # baseline's own defaults.
             'param_matched_training': [
                 {
                     'model': r['base_name'],
@@ -231,7 +290,8 @@ def main():
                     'match_status': r['match_status'],
                 }
                 for r in results
-                if r['match_status'] != 'N/A' and r['matched_kwargs'] is not None
+                if r['match_status'] not in ('N/A', 'UNNEEDED')
+                and r['matched_kwargs'] is not None
             ]
         }
         with open(args.output_json, 'w') as f:
@@ -247,9 +307,11 @@ def main():
         # Base row
         print(f"{r['base_name']:<35} & {r['base_params_M']:>10.2f}  &          &          \\\\")
         # Widened (or N/A) row
-        if r['match_status'] == 'N/A':
-            print(f"{r['base_name'] + '_wide (N/A)':<35} & "
-                  f"{'—':>10}    &          &          \\\\  % pretrained-tied")
+        if r['match_status'] in ('N/A', 'UNNEEDED'):
+            note = ('no widening axis' if r['match_status'] == 'N/A'
+                    else f"only {r['param_increase_pct']:+.1f}% to explain")
+            print(f"{r['base_name'] + '_wide (' + r['match_status'] + ')':<35} & "
+                  f"{'—':>10}    &          &          \\\\  % {note}")
         else:
             wide_label = f"{r['base_name']}_wide ({r['matched_label']})"
             print(f"{wide_label:<35} & {r['matched_params_M']:>10.2f}  &          &          \\\\")

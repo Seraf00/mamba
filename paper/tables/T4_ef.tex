@@ -1,12 +1,18 @@
 %==============================================================================
-% Paper 1 / T4 — EF metrics (auto-generated)
+% Paper 1 / T4 - EF metrics (auto-generated)
+%   <- results/yolo/baseline_ef_native.json  (native resolution,
+%      largest-connected-component filter, official CAMUS Simpson)
+%   <- results/yolo/_EF_ORACLE/ef_oracle.json  (oracle row)
 %==============================================================================
 \begin{table}[t]
 \centering
-\caption{Biplane Simpson's ejection fraction (EF) metrics on the CAMUS
-test set. Bias and the 95\% limits of agreement (LoA) are the
-Bland--Altman statistics against reference EF over the 50 test patients.
-Best per column in \textbf{bold}.}
+\caption{Biplane Simpson's ejection fraction (EF) against the clinically
+recorded value on the CAMUS test set, computed with the official CAMUS
+implementation at native resolution with a largest-component filter.
+Bias and the 95\% limits of agreement (LoA) are the Bland--Altman
+statistics over the 50 test patients. The oracle row applies the identical
+pipeline to the ground-truth masks and bounds what any segmentation can
+achieve. Best per column in \textbf{bold}.}
 \label{tab:ef}
 \small
 \setlength{\tabcolsep}{6pt}
@@ -14,15 +20,17 @@ Best per column in \textbf{bold}.}
 \toprule
 Architecture       & {MAE (\%)} & {$r$} & {Bias (\%)} & {95\% LoA (\%)} \\
 \midrule
-nnU-Net            & \textbf{5.52} & 0.828 & +0.84 & [-14.2, +15.9] \\
-UNet-V1            & 6.78 & 0.793 & -0.74 & [-18.1, +16.6] \\
-UNet-ResNet        & 6.78 & \textbf{0.832} & -2.42 & [-18.7, +13.8] \\
-UNet-V2            & 7.60 & 0.728 & -1.20 & [-20.7, +18.3] \\
-TransUNet          & 7.64 & 0.799 & -3.44 & [-21.4, +14.5] \\
-DeepLabV3+         & 8.46 & 0.744 & -6.10 & [-24.0, +11.8] \\
-FPN-UNet           & 10.12 & 0.677 & -8.12 & [-28.6, +12.4] \\
-Swin-UNet          & 10.46 & 0.574 & -4.10 & [-31.0, +22.8] \\
-DenseContextU-Net  & 16.04 & 0.444 & -11.52 & [-48.1, +25.0] \\
+UNet-V1            & \textbf{6.62} & 0.825 & -0.42 & [-15.7, +14.8] \\
+TransUNet          & 7.36 & \textbf{0.826} & -1.20 & [-19.4, +17.0] \\
+UNet-ResNet        & 7.42 & 0.807 & -0.98 & [-18.2, +16.2] \\
+UNet-V2            & 7.56 & 0.781 & +0.80 & [-16.7, +18.3] \\
+nnU-Net            & 8.32 & 0.783 & +0.76 & [-19.7, +21.2] \\
+DenseContextU-Net  & 9.38 & 0.763 & -7.22 & [-25.6, +11.2] \\
+Swin-UNet          & 9.44 & 0.640 & -1.96 & [-23.9, +20.0] \\
+DeepLabV3+         & 9.58 & 0.706 & -7.14 & [-26.9, +12.6] \\
+FPN-UNet           & 10.60 & 0.704 & -8.52 & [-29.1, +12.1] \\
+\midrule
+\textit{oracle (ground-truth masks)} & 5.44 & 0.863 & +3.12 & [-11.8, +18.0] \\
 \bottomrule
 \end{tabular}
 \end{table}

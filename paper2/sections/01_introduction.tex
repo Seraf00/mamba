@@ -1,0 +1,46 @@
+\section{Introduction}
+
+Two-dimensional echocardiography is the first-line modality for assessing
+cardiac function, and delineation of the left-ventricular endocardium,
+myocardium and left atrium underpins every downstream measurement, ejection
+fraction chief among them. The CAMUS benchmark~\cite{leclerc2019camus} has been
+occupied since its release by encoder--decoder
+networks~\cite{ronneberger2015unet,isensee2021nnunet} and transformer hybrids
+such as TransUNet~\cite{chen2021transunet} and Swin-UNet~\cite{cao2022swinunet}.
+
+That family is a poor fit for where echocardiography is heading. Handheld
+probes push acquisition to the bedside, where inference must run on an embedded
+accelerator alongside a live image stream. The YOLO family~\cite{redmon2016yolo}
+targets that operating point, with a segmentation head derived from YOLACT's
+prototype-mask formulation~\cite{bolya2019yolact}.
+
+Applying one to CAMUS is not a matter of changing the dataloader. A YOLO
+instance mask is supervised as a \emph{single closed polygon}, and one of the
+three CAMUS structures -- the myocardium -- is an annulus. A polygon has no
+hole. It is natural to assume that how one resolves this matters. We show it
+does not, and nor does almost any other configuration choice.
+
+\textbf{An encoding, and its ceiling.} We represent the epicardium as a
+\emph{filled} contour and recover the myocardium by subtraction, keeping the
+mask head on simply-connected shapes (Sec.~\ref{sec:encoding}). We quantify what
+such an encoding can express as an explicit \emph{ceiling}: at 96 vertices the
+recomposed label map reaches $0.997$ Dice and $0.308$\,mm HD95 -- exactly one
+pixel. The polygon representation is not what limits a detector here. We further
+show the ceiling is a valid bound but \emph{not} predictive: where it forecasts
+a resolvable gap between encodings, none appears.
+
+\textbf{A study reported against a measured noise floor.} We sweep encoding,
+vertex budget, scale, generation, resolution, mask-prototype resolution,
+augmentation, pretraining, data scale, loss weighting and optimiser on one
+laptop GPU (Sec.~\ref{sec:experiments}). Critically we first measure run-to-run
+variance: three seeds of one configuration span $0.134$\,mm HD95, which a paired
+test over the 200 test frames calls significant ($p{=}0.035$). Read against that
+floor, \emph{no} configuration change improves on the stock one; what matters is
+training-side, while every capacity knob is null or harmful.
+
+\textbf{A like-for-like comparison.} We evaluate on the official CAMUS split,
+verified byte-identical to the released subgroup files, against nine baselines
+under one protocol, with HD95 at native resolution and one latency protocol for
+every model (Sec.~\ref{sec:results}). A 2.7\,M-parameter detector matches or
+exceeds all of them, exceeds published inter-observer agreement, and is
+near-invariant to input resolution where encoder--decoders are not.

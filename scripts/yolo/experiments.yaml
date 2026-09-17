@@ -1,0 +1,260 @@
+defaults:
+  data: ./yolo_data/camus_edes/data.yaml
+  encoding: filled
+  model: yolo26n-seg.pt
+  epochs: 100
+  imgsz: 640
+  batch: 8
+  workers: 4
+  seed: 0
+  patience: 30
+  device: '0'
+datasets:
+- name: camus_edes
+  encoding: filled
+  n_points: 96
+- name: camus_edes_seam
+  encoding: seam
+  n_points: 96
+- name: camus_edes_n32
+  encoding: filled
+  n_points: 32
+- name: camus_edes_seam_n32
+  encoding: seam
+  n_points: 32
+- name: camus_seq
+  encoding: filled
+  n_points: 96
+  include_sequences: true
+groups:
+- id: E1_encoding
+  question: How should the annular myocardium be written as a polygon?
+  runs:
+  - name: E1_filled
+    data: ./yolo_data/camus_edes/data.yaml
+    encoding: filled
+  - name: E1_seam
+    data: ./yolo_data/camus_edes_seam/data.yaml
+    encoding: seam
+- id: E2_scale
+  question: How much do capacity and generation buy on 1600 training frames?
+  runs:
+  - name: E2_v26n
+    model: yolo26n-seg.pt
+  - name: E2_v26s
+    model: yolo26s-seg.pt
+    batch: 8
+  - name: E2_v26m
+    model: yolo26m-seg.pt
+    batch: 4
+  - name: E2_v11n
+    model: yolo11n-seg.pt
+  - name: E2_v8n
+    model: yolov8n-seg.pt
+- id: E3_imgsz
+  question: Does higher input resolution reduce HD95?
+  runs:
+  - name: E3_sz512
+    imgsz: 512
+  - name: E3_sz640
+    imgsz: 640
+  - name: E3_sz800
+    imgsz: 800
+    batch: 6
+  - name: E3_sz960
+    imgsz: 960
+    batch: 4
+- id: E4_maskratio
+  question: Is the 1/4-resolution mask head the accuracy ceiling?
+  runs:
+  - name: E4_mr4
+    mask_ratio: 4
+  - name: E4_mr2
+    mask_ratio: 2
+    batch: 6
+  - name: E4_mr1
+    mask_ratio: 1
+    batch: 4
+- id: E5_aug
+  question: Do natural-image augmentations transfer to sector ultrasound?
+  runs:
+  - name: E5_echo
+  - name: E5_coco
+    coco_aug: true
+  - name: E5_none
+    degrees: 0.0
+    translate: 0.0
+    scale: 0.0
+    hsv_v: 0.0
+  - name: E5_echo_fliplr
+    fliplr: 0.5
+- id: E6_pretrain
+  question: Does COCO pretraining help on grayscale ultrasound?
+  runs:
+  - name: E6_pretrained
+    model: yolo26n-seg.pt
+  - name: E6_scratch
+    model: yolo26n-seg.yaml
+- id: E7_data
+  question: Do the half-sequence frames buy accuracy at ED/ES?
+  runs:
+  - name: E7_edes
+    data: ./yolo_data/camus_edes/data.yaml
+    epochs: 100
+  - name: E7_seq
+    data: ./yolo_data/camus_seq/data.yaml
+    epochs: 40
+    batch: 8
+- id: E8_vertices
+  question: How coarse can the training polygons be?
+  runs:
+  - name: E8_n96
+    data: ./yolo_data/camus_edes/data.yaml
+  - name: E8_n32
+    data: ./yolo_data/camus_edes_n32/data.yaml
+- id: E9_final
+  question: Best configuration, 3 seeds, for the comparison table.
+  runs:
+  - name: E9_seed0
+    seed: 0
+  - name: E9_seed1
+    seed: 1
+  - name: E9_seed2
+    seed: 2
+- id: E10_ceiling_test
+  question: Does the ceiling predict the encoding gap where it is large?
+  runs:
+  - name: E10_filled_n32
+    data: ./yolo_data/camus_edes_n32/data.yaml
+    encoding: filled
+  - name: E10_seam_n32
+    data: ./yolo_data/camus_edes_seam_n32/data.yaml
+    encoding: seam
+- id: E11_best
+  question: Does combining the per-group winners beat each individually?
+  runs:
+  - name: E11_best_seed0
+    seed: 0
+    data: ./yolo_data/camus_edes/data.yaml
+    encoding: filled
+    model: yolo26n-seg.pt
+    imgsz: 640
+    mask_ratio: 4
+    epochs: 100
+  - name: E11_best_seed1
+    seed: 1
+    data: ./yolo_data/camus_edes/data.yaml
+    encoding: filled
+    model: yolo26n-seg.pt
+    imgsz: 640
+    mask_ratio: 4
+    epochs: 100
+  - name: E11_best_seed2
+    seed: 2
+    data: ./yolo_data/camus_edes/data.yaml
+    encoding: filled
+    model: yolo26n-seg.pt
+    imgsz: 640
+    mask_ratio: 4
+    epochs: 100
+- id: E12_boundary
+  question: Does a boundary-weighted mask loss reduce HD95?
+  runs:
+  - name: E12_bw0
+    data: ./yolo_data/camus_edes/data.yaml
+    encoding: filled
+    model: yolo26n-seg.pt
+    imgsz: 640
+    mask_ratio: 4
+    epochs: 100
+  - name: E12_bw20
+    boundary_weight: 2.0
+    data: ./yolo_data/camus_edes/data.yaml
+    encoding: filled
+    model: yolo26n-seg.pt
+    imgsz: 640
+    mask_ratio: 4
+    epochs: 100
+  - name: E12_bw50
+    boundary_weight: 5.0
+    data: ./yolo_data/camus_edes/data.yaml
+    encoding: filled
+    model: yolo26n-seg.pt
+    imgsz: 640
+    mask_ratio: 4
+    epochs: 100
+  - name: E12_bw100
+    boundary_weight: 10.0
+    data: ./yolo_data/camus_edes/data.yaml
+    encoding: filled
+    model: yolo26n-seg.pt
+    imgsz: 640
+    mask_ratio: 4
+    epochs: 100
+- id: E13_optim
+  question: 'Do the loss gains or the optimiser/LR move HD95? (NB: box scales the segmentation loss, not
+    just the box loss; and optimizer=auto ignores lr0, so LR arms set it explicitly.)'
+  runs:
+  - name: E13_box_half
+    box: 3.75
+    data: ./yolo_data/camus_edes/data.yaml
+    encoding: filled
+    model: yolo26n-seg.pt
+    imgsz: 640
+    mask_ratio: 4
+    epochs: 100
+  - name: E13_box_double
+    box: 15.0
+    data: ./yolo_data/camus_edes/data.yaml
+    encoding: filled
+    model: yolo26n-seg.pt
+    imgsz: 640
+    mask_ratio: 4
+    epochs: 100
+  - name: E13_cls_double
+    cls: 1.0
+    data: ./yolo_data/camus_edes/data.yaml
+    encoding: filled
+    model: yolo26n-seg.pt
+    imgsz: 640
+    mask_ratio: 4
+    epochs: 100
+  - name: E13_dfl_double
+    dfl: 3.0
+    data: ./yolo_data/camus_edes/data.yaml
+    encoding: filled
+    model: yolo26n-seg.pt
+    imgsz: 640
+    mask_ratio: 4
+    epochs: 100
+  - name: E13_adamw
+    optimizer: AdamW
+    lr0: 0.001
+    lrf: 0.01
+    data: ./yolo_data/camus_edes/data.yaml
+    encoding: filled
+    model: yolo26n-seg.pt
+    imgsz: 640
+    mask_ratio: 4
+    epochs: 100
+  - name: E13_sgd
+    optimizer: SGD
+    lr0: 0.01
+    lrf: 0.01
+    data: ./yolo_data/camus_edes/data.yaml
+    encoding: filled
+    model: yolo26n-seg.pt
+    imgsz: 640
+    mask_ratio: 4
+    epochs: 100
+inference_sweeps:
+- name: I1_conf10
+  conf: 0.1
+- name: I1_conf25
+  conf: 0.25
+- name: I1_conf50
+  conf: 0.5
+- name: I2_tta
+  tta: true
+- name: I3_half
+  half: true

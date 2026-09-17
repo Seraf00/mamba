@@ -1,0 +1,110 @@
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{What the negative result means}
+
+Thirteen factors, roughly fifty training runs, and no improvement on a stock
+configuration beyond run-to-run variance. It is worth being precise about what
+this does and does not establish.
+
+It does not establish that CAMUS segmentation is solved, nor that architecture
+is irrelevant in general. It establishes something narrower and, we think, more
+useful: on this benchmark, at this data scale, the design choices practitioners
+routinely tune --- capacity, resolution, mask-head resolution, label encoding,
+augmentation recipe, loss weighting, optimiser --- do not move boundary accuracy
+by more than the seed changes it. A practitioner is better served by running
+three seeds of a stock configuration than by tuning one.
+
+The factors that did register are informative by contrast. Both are
+\emph{training-side} and both concern the information available to the model
+rather than its capacity to represent: augmentation ($0.318$\,mm) and COCO
+initialisation ($0.183$\,mm). Adding parameters, pixels or prototype resolution
+consistently did nothing or hurt. On 1600 images the model is regularisation-
+and information-bound, not capacity-bound.
+
+\subsection{Where the remaining error lives}
+
+The gap between the achieved $3.809$\,mm HD95 and the $0.31$\,mm encoding ceiling
+is a factor of twelve, and none of our interventions closed any of it. Three
+independent observations point at the annotations rather than the model.
+
+First, mean Dice already exceeds the inter-observer agreement reported by the
+dataset's authors ($0.899$). Above that level the metric increasingly rewards
+conformity to one annotator's habits.
+
+Second, the boundary-weighted loss --- which upweights exactly the pixels where
+the contour lies --- was the one intervention that was significantly
+\emph{harmful}. If the contour were where recoverable signal remained, weighting
+it should have helped. That it hurts is consistent with the contour being where
+the reference is least reliable, so that emphasising it amplifies label noise.
+
+Third, the EF analysis reproduces the pattern through an independent clinical
+endpoint: perfect segmentation yields $5.44\%$ EF MAE, and the best model
+$6.66\%$. Most of the error survives perfect masks.
+
+We were unable to test this directly. CAMUS released a multi-observer subset ---
+a second and third cardiologist contoured 50 patients, and the original
+annotator repeated the task seven months later --- but that data is not part of
+the public distribution. We enumerated the public collection and confirmed it
+contains only single-observer ground truth. An implementation that would compute
+observer agreement under our exact protocol is included in the released code for
+anyone who obtains those contours.
+
+\subsection{Implications for evaluation practice}
+
+Three findings of this study are methodological rather than architectural, and
+we believe they matter beyond CAMUS.
+
+\paragraph{Single-seed ablations produce false positives} A paired Wilcoxon test
+over the 200-frame CAMUS test set assigns $p{=}0.035$ to two runs that differ
+only in random seed. Small test sets and paired tests combine to make seed noise
+look significant. Several differences reported in the CAMUS literature are
+smaller than the $0.134$\,mm we measure from the seed alone. Reporting a
+seed-variance estimate should be a minimum standard on benchmarks of this size.
+
+\paragraph{Evaluation faults can hide in released reference code} The official
+CAMUS EF implementation selects a contour by position rather than area. This is
+correct on ground truth by construction and therefore invisible to the authors'
+own validation, but it reduces EF correlation on model predictions from
+$r{=}0.825$ to $r{=}0.080$ at native resolution. A reference implementation
+being widely used is not evidence that it behaves correctly on the inputs one is
+actually feeding it.
+
+\paragraph{Protocols must be stated, not assumed} We found that computing
+boundary metrics on a resampled grid while retaining native spacing
+under-reports distances; that volumes computed the same way are physiologically
+impossible ($\approx$10\,ml rather than $\approx$108\,ml) yet yield plausible EF
+because the error partially cancels in the ratio; and that latency figures in
+the literature are not comparable across papers because hardware differs. Each
+of these silently changes reported numbers without producing any visible error.
+
+\subsection{Practical recommendations}
+
+For practitioners deploying instance segmentation on cardiac ultrasound:
+
+\begin{itemize}
+\item Use the filled-contour decomposition for annular structures. Not because
+      it is more accurate --- it is not --- but because it is simpler and its
+      ceiling is one pixel.
+\item Set the confidence threshold far below the natural-image default. Where
+      every structure is known to be present, $0.10$ removed every missed
+      detection at no accuracy cost.
+\item Do not tune capacity. Spend the compute on seeds instead.
+\item Apply a connected-component filter before any volume or EF computation.
+\item Measure latency yourself, under one protocol, at the resolution you will
+      deploy at.
+\end{itemize}
+
+\subsection{Limitations}
+
+This study covers one dataset, one acquisition protocol and one GPU class, with
+a single official split rather than cross-validation, so the reported spread
+reflects seed rather than split variation. Most ablation arms are single-seed
+and are interpreted only against the measured noise floor, never individually;
+where an arm approached that floor we have said so rather than claiming an
+effect. Test-time augmentation is unavailable for segmentation models in the
+framework used --- it is silently ignored --- so it is untested rather than
+found ineffective. Latency is measured on a laptop discrete GPU rather than on
+the embedded accelerator the deployment argument ultimately points at. Finally,
+the annotation-limit hypothesis is inferred from three converging observations
+rather than measured directly, because the multi-observer data is not public.

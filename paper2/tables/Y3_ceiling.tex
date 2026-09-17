@@ -1,0 +1,20 @@
+%============================================================================
+% Y3 -- polygon encoding ceiling (auto-generated)
+%============================================================================
+\begin{table}[t]
+\centering
+\caption{Polygon encoding ceiling: ground-truth masks converted to YOLO polygons and rasterised back, scored against the untouched native ground truth. These are upper bounds no detector trained on that encoding can exceed. $n$ is the vertex budget per contour ($n{=}0$ keeps every boundary pixel).}
+\label{tab:ceiling}
+\small
+\begin{tabular}{l c c c c}
+\toprule
+Encoding & $n$ & Dice & HD95 (mm) & Myo.\ target \\
+\midrule
+Filled contour (ours)    & 32 & 0.9920 & 0.513 & 0.9953 \\
+Filled contour (ours)    & 96 & 0.9970 & 0.308 & 0.9984 \\
+\midrule
+Seam-cut annulus         & 32 & 0.9883 & 0.741 & 0.9671 \\
+Seam-cut annulus         & 96 & 0.9968 & 0.308 & 0.9939 \\
+\bottomrule
+\end{tabular}
+\end{table}

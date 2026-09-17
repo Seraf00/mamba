@@ -1,0 +1,73 @@
+\section{Results and Discussion}
+\label{sec:results}
+
+\subsection{Comparison with semantic segmentation}
+
+Table~\ref{tab:main} places the default YOLO configuration alongside nine
+baselines. Averaged over three seeds YOLO26n-seg reaches $0.9113$ Dice and
+$3.809$\,mm HD95 at $2.7$\,M parameters, against $0.9121$/$4.081$\,mm for
+TransUNet ($102$\,M). The axes differ: on HD95 it is best in the benchmark by
+$0.271$\,mm, twice the seed floor; on Dice it is indistinguishable from the four
+leading baselines, tested over the $50$ patients with seeds averaged. Seed~0
+scored over frames would instead give $0.9151$ and eight of nine.
+
+\input{tables/Y1_main}
+
+Two external comparisons follow on the same split. Against CGQR-Net, a
+contour-guided boundary-aware method reporting per-structure Dice of
+$93.95$/$88.09$/$89.15$ (mean $90.40$), our seed mean is
+$93.86$/$87.91$/$91.62$ (mean $91.13$): ahead on the atrium and the
+three-class mean, marginally behind on both ventricular classes. Against a multi-task framework reporting
+$0.951$ for the LV cavity at ED, our LV-endocardial Dice at ED is $0.9523$. More
+important than either is the dataset authors' own reference point: average
+inter-observer Dice on CAMUS is $0.899$~\cite{leclerc2019camus}. Every model in
+Table~\ref{tab:main} above $0.90$ already operates beyond the level at which two
+cardiologists agree, which is how the small differences there should be read.
+
+\subsection{Latency under a single protocol}
+
+Published latencies for these baselines were measured on other hardware and
+cannot be mixed with ours, so we re-time every model on one GPU with one
+protocol (batch 1, CUDA-synchronised, median of 50 after 10 warmup).
+
+The result is a property of the architecture family rather than a tuning
+outcome: \textbf{YOLO is near-invariant to input resolution}, $15.7$\,ms at
+$256$\,px and $15.5$\,ms at $640$\,px, while every encoder--decoder scales with
+pixel count ($4$--$8\times$: nnU-Net $10.7\rightarrow78.5$\,ms, UNet-V1
+$17.7\rightarrow119.3$\,ms). At matched $640$\,px YOLO is $1.5$--$23\times$
+faster than every baseline; end-to-end inference is $11.8$\,ms. Neither FP16
+($16.7$\,ms) nor ONNX export ($23.5$\,ms) improved on the PyTorch path.
+
+\subsection{Ejection fraction}
+
+EF requires pairing each patient's ED and ES predictions in both views. With the
+official CAMUS biplane Simpson implementation at native resolution, YOLO reaches
+$9.24\%$ MAE at $r{=}0.756$: within the baselines' range ($6.66$--$9.74\%$,
+$r{=}0.640$--$0.827$) but not leading them, so we claim no EF advantage. The
+ceiling matters more than the ranking -- the \emph{ground-truth} masks through
+the same pipeline give $5.44\%$ MAE at $r{=}0.863$, the irreducible gap between
+mask-derived and clinically recorded EF, which consumes most of every model's
+error.
+
+One implementation note with wider consequences: the official Simpson code takes
+the first contour by position rather than the largest. Ground truth is
+single-component so this never manifests, but predictions carry occasional
+spurious blobs -- on one baseline $6\%$ of frames -- which sufficed to drive EF
+correlation from $r{=}0.911$ to $r{=}0.030$. A largest-component filter is
+mandatory when computing EF from predictions.
+
+\subsection{Discussion}
+
+\textbf{Nothing we varied is the bottleneck.} A perfect model under our
+decomposition scores $0.997$ Dice at one-pixel HD95, yet no configuration change
+improves on the stock setting beyond the $0.134$\,mm seed floor. The gap between
+$3.74$\,mm and the $0.31$\,mm ceiling is not attributable to the choices
+practitioners normally tune; given that mean Dice already exceeds inter-observer
+agreement, the annotations are the most plausible remaining limit.
+
+\textbf{Limitations.} One dataset, one acquisition protocol, one GPU class, and
+a single split rather than cross-validation. Most ablation arms are single-seed
+and are interpreted only against the measured noise floor, never individually.
+Test-time augmentation is unavailable for segmentation models in the framework
+used, so it is untested rather than found ineffective. Latency is measured on a
+laptop GPU, not an embedded target.

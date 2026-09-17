@@ -41,14 +41,20 @@ class MambaDecoderBlock(nn.Module):
         out_channels: int,
         mamba_type: str = 'vmamba',
         use_gated_skip: bool = True,
-        d_state: int = 16
+        d_state: int = 16,
+        use_mamba_skip: bool = True
     ):
         super().__init__()
-        
+
         self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
-        
+        self.use_mamba_skip = use_mamba_skip
+
         # Mamba-enhanced skip
-        if use_gated_skip:
+        if not use_mamba_skip:
+            # Plain U-Net skip: concatenate the raw encoder feature.
+            self.mamba_skip = None
+            fused_channels = skip_channels + in_channels // 2
+        elif use_gated_skip:
             self.mamba_skip = GatedMambaSkip(
                 encoder_channels=skip_channels,
                 decoder_channels=in_channels // 2,
@@ -65,7 +71,7 @@ class MambaDecoderBlock(nn.Module):
             )
             fused_channels = skip_channels + in_channels // 2
         
-        self.use_gated = use_gated_skip
+        self.use_gated = use_gated_skip and use_mamba_skip
         
         self.conv = nn.Sequential(
             nn.Conv2d(fused_channels, out_channels, kernel_size=3, padding=1, bias=False),
@@ -84,7 +90,9 @@ class MambaDecoderBlock(nn.Module):
             x = F.interpolate(x, size=skip.shape[2:], mode='bilinear', align_corners=True)
         
         # Mamba skip fusion
-        if self.use_gated:
+        if not self.use_mamba_skip:
+            fused = torch.cat([skip, x], dim=1)
+        elif self.use_gated:
             fused = self.mamba_skip(skip, x)
         else:
             skip = self.mamba_skip(skip, x)
@@ -133,10 +141,28 @@ class MambaUNetResNet(nn.Module):
         mamba_after_encoder: bool = False,
         use_global_bottleneck: bool = True,
         use_gated_skip: bool = True,
+        mamba_in_bottleneck: bool = True,
         freeze_encoder: bool = False,
-        d_state: int = 16
+        d_state: int = 16,
+        mamba_in_encoder: Optional[bool] = None,
+        mamba_in_skip: Optional[bool] = None
     ):
         super().__init__()
+
+        # This model predates the mamba_in_* convention and named its encoder
+        # and skip positions differently. Accept the canonical names as aliases
+        # so the ablation driver can address every architecture identically;
+        # the originals still work and still win if both are given.
+        if mamba_in_encoder is not None:
+            mamba_after_encoder = mamba_in_encoder
+        # NOTE: mamba_in_skip maps to the genuine on/off, NOT to
+        # use_gated_skip -- that one only picks between two Mamba skips.
+        use_mamba_skip = True if mamba_in_skip is None else mamba_in_skip
+        self.mamba_positions = tuple(
+            p for p, on in (('encoder', mamba_after_encoder),
+                            ('skip', use_gated_skip),
+                            ('bottleneck', mamba_in_bottleneck)) if on)
+        self.mamba_in_bottleneck = mamba_in_bottleneck
         
         self.in_channels = in_channels
         self.num_classes = num_classes
@@ -178,37 +204,38 @@ class MambaUNetResNet(nn.Module):
                 )
         
         # Global context Mamba bottleneck
-        if use_global_bottleneck:
-            self.bottleneck = GlobalContextMambaBottleneck(
-                dim=encoder_channels[4],
-                mamba_type=mamba_type,
-                d_state=d_state
-            )
-        else:
-            self.bottleneck = MambaBottleneck(
-                dim=encoder_channels[4],
-                mamba_type=mamba_type,
-                d_state=d_state
-            )
+        if mamba_in_bottleneck:
+            if use_global_bottleneck:
+                self.bottleneck = GlobalContextMambaBottleneck(
+                    dim=encoder_channels[4],
+                    mamba_type=mamba_type,
+                    d_state=d_state
+                )
+            else:
+                self.bottleneck = MambaBottleneck(
+                    dim=encoder_channels[4],
+                    mamba_type=mamba_type,
+                    d_state=d_state
+                )
         
         # Decoder
         decoder_channels = [256, 128, 64, 32]
         
         self.decoder4 = MambaDecoderBlock(
             encoder_channels[4], encoder_channels[3], decoder_channels[0],
-            mamba_type=mamba_type, use_gated_skip=use_gated_skip, d_state=d_state
+            mamba_type=mamba_type, use_gated_skip=use_gated_skip, use_mamba_skip=use_mamba_skip, d_state=d_state
         )
         self.decoder3 = MambaDecoderBlock(
             decoder_channels[0], encoder_channels[2], decoder_channels[1],
-            mamba_type=mamba_type, use_gated_skip=use_gated_skip, d_state=d_state
+            mamba_type=mamba_type, use_gated_skip=use_gated_skip, use_mamba_skip=use_mamba_skip, d_state=d_state
         )
         self.decoder2 = MambaDecoderBlock(
             decoder_channels[1], encoder_channels[1], decoder_channels[2],
-            mamba_type=mamba_type, use_gated_skip=use_gated_skip, d_state=d_state
+            mamba_type=mamba_type, use_gated_skip=use_gated_skip, use_mamba_skip=use_mamba_skip, d_state=d_state
         )
         self.decoder1 = MambaDecoderBlock(
             decoder_channels[2], encoder_channels[0], decoder_channels[3],
-            mamba_type=mamba_type, use_gated_skip=use_gated_skip, d_state=d_state
+            mamba_type=mamba_type, use_gated_skip=use_gated_skip, use_mamba_skip=use_mamba_skip, d_state=d_state
         )
         
         # Final output
@@ -298,7 +325,8 @@ class MambaUNetResNet(nn.Module):
             x4 = x4 + self.encoder_mamba[2](x4)
         
         # Bottleneck
-        x4 = self.bottleneck(x4)
+        if self.mamba_in_bottleneck:
+            x4 = self.bottleneck(x4)
         
         # Decoder
         d4 = self.decoder4(x4, x3)  # /16

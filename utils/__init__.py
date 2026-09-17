@@ -16,6 +16,7 @@ from .io import (
 )
 from .misc import (
     set_seed,
+    pin_determinism,
     get_device,
     count_parameters
 )
@@ -33,6 +34,7 @@ __all__ = [
     'save_config',
     # Misc
     'set_seed',
+    'pin_determinism',
     'get_device',
     'count_parameters'
 ]

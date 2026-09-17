@@ -1,28 +1,36 @@
 %==============================================================================
 % Paper 1 / T2 — Boundary metrics in mm (auto-generated)
 %==============================================================================
-\begin{table}[t]
+\begin{table*}[t]
 \centering
-\caption{Boundary metrics on the CAMUS test split. HD95 is the
-95\textsuperscript{th}-percentile Hausdorff distance, ASSD is the average
-symmetric surface distance, both reported in millimetres using per-sample
-NIfTI pixel spacing. Best per column in \textbf{bold}.}
+\caption{Boundary metrics on the CAMUS test split, mean and per class.
+HD95 is the 95\textsuperscript{th}-percentile Hausdorff distance, ASSD the
+average symmetric surface distance, both in millimetres computed at native
+resolution using per-sample NIfTI pixel spacing. The per-class columns show
+that overlap and distance disagree about which structure is hardest: the
+epicardium has the lowest Dice for all nine architectures
+(Table~\ref{tab:main}), yet the largest HD95 for only two of them --- for
+five the worst boundary is the left atrium. A per-class overlap summary and
+a per-class distance summary are therefore not interchangeable. Best per
+column in \textbf{bold}.}
 \label{tab:boundary}
 \small
-\setlength{\tabcolsep}{6pt}
-\begin{tabular}{l c c}
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{l cccc cccc}
 \toprule
-Architecture       & {HD95 (mm)} & {ASSD (mm)} \\
+\multirow{2}{*}{Architecture} & \multicolumn{4}{c}{HD95 (mm)} & \multicolumn{4}{c}{ASSD (mm)} \\
+\cmidrule(lr){2-5}\cmidrule(lr){6-9}
+                   & Mean & LV-endo & LV-epi & LA & Mean & LV-endo & LV-epi & LA \\
 \midrule
-TransUNet          & \textbf{4.08} & \textbf{0.82} \\
-UNet-ResNet        & 4.26 & 0.84 \\
-nnU-Net            & 4.27 & 0.84 \\
-UNet-V1            & 4.62 & 0.87 \\
-Swin-UNet          & 5.08 & 1.00 \\
-UNet-V2            & 5.29 & 1.03 \\
-DeepLabV3+         & 5.71 & 1.19 \\
-FPN-UNet           & 6.21 & 1.24 \\
-DenseContextU-Net  & 8.29 & 1.55 \\
+TransUNet          & \textbf{4.08} & \textbf{3.95} & \textbf{4.20} & \textbf{4.09} & \textbf{0.82} & 0.80 & \textbf{0.84} & \textbf{0.82} \\
+UNet-ResNet        & 4.26 & 4.03 & 4.39 & 4.37 & 0.84 & 0.81 & 0.87 & 0.86 \\
+nnU-Net            & 4.27 & 4.01 & 4.29 & 4.51 & 0.84 & \textbf{0.78} & 0.84 & 0.89 \\
+UNet-V1            & 4.62 & 4.36 & 4.61 & 4.89 & 0.87 & 0.82 & 0.88 & 0.91 \\
+Swin-UNet          & 5.08 & 4.90 & 5.00 & 5.34 & 1.00 & 0.98 & 0.98 & 1.03 \\
+UNet-V2            & 5.29 & 5.35 & 5.29 & 5.23 & 1.03 & 1.04 & 1.05 & 1.00 \\
+DeepLabV3+         & 5.71 & 5.02 & 5.60 & 6.51 & 1.19 & 1.03 & 1.17 & 1.37 \\
+FPN-UNet           & 6.21 & 6.76 & 6.66 & 5.22 & 1.24 & 1.26 & 1.34 & 1.11 \\
+DenseContextU-Net  & 8.29 & 7.15 & 8.21 & 9.52 & 1.55 & 1.37 & 1.47 & 1.81 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}

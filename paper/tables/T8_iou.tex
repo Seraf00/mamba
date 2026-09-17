@@ -1,0 +1,30 @@
+%==============================================================================
+% Paper 1 / T8 - Per-class IoU (auto-generated)
+%   <- results/base_models/evaluation/evaluation_results.json : iou_*
+%==============================================================================
+\begin{table}[t]
+\centering
+\caption{Intersection-over-union on the CAMUS test split, mean and per
+class. IoU orders the architectures almost identically to Dice, as expected
+of two monotonically related overlap measures; it is reported because IoU is
+the more common metric outside medical imaging and makes this benchmark
+comparable to that literature. Best per column in \textbf{bold}.}
+\label{tab:iou}
+\small
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{l cccc}
+\toprule
+Architecture       & {Mean IoU} & {LV-endo} & {LV-epi} & {LA} \\
+\midrule
+TransUNet          & \textbf{0.8420} & 0.8828 & 0.7864 & \textbf{0.8570} \\
+nnU-Net            & 0.8384 & \textbf{0.8833} & \textbf{0.7864} & 0.8456 \\
+UNet-ResNet        & 0.8364 & 0.8790 & 0.7810 & 0.8493 \\
+UNet-V1            & 0.8362 & 0.8828 & 0.7818 & 0.8441 \\
+UNet-V2            & 0.8168 & 0.8610 & 0.7560 & 0.8335 \\
+Swin-UNet          & 0.8037 & 0.8496 & 0.7447 & 0.8169 \\
+DeepLabV3+         & 0.7657 & 0.8389 & 0.6980 & 0.7601 \\
+FPN-UNet           & 0.7619 & 0.8142 & 0.6631 & 0.8085 \\
+DenseContextU-Net  & 0.7513 & 0.8192 & 0.6783 & 0.7564 \\
+\bottomrule
+\end{tabular}
+\end{table}
