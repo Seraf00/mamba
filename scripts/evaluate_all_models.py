@@ -38,7 +38,7 @@ from data import CAMUSDataset, get_transforms
 from data.camus_dataset import CAMUSPatient
 from models import get_model
 from metrics import SegmentationMetrics, EjectionFractionCalculator, CAMUSEFCalculator, compute_ejection_fraction
-from utils import set_seed, get_device
+from utils import set_seed, get_device, pin_determinism
 
 
 # Models requiring specific input sizes
@@ -83,6 +83,12 @@ def parse_args():
                         help='Device')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed')
+    parser.add_argument('--pin', type=str, default='full',
+                        choices=['full', 'cudnn', 'tf32', 'algos', 'off'],
+                        help='Pin arithmetic precision (default full: TF32 off). '
+                             'Training and the EF evaluator are pinned; test '
+                             'Dice/HD95 computed with cuDNN TF32 on would not '
+                             'be measured under the same arithmetic.')
     
     return parser.parse_args()
 
@@ -653,7 +659,10 @@ def create_latex_table(results: Dict[str, Dict], output_path: Path):
 
 def main():
     args = parse_args()
-    set_seed(args.seed)
+    if args.pin != 'off':
+        pin_determinism(args.seed, args.pin)   # before any CUDA work
+    else:
+        set_seed(args.seed)
     
     # Find checkpoints
     checkpoint_dir = Path(args.checkpoint_dir)

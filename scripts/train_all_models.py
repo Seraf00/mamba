@@ -367,6 +367,10 @@ def parse_args():
     # Parameter-matched baselines (for fair comparison)
     parser.add_argument('--param_matched', action='store_true',
                         help='Also train wider base models matching Mamba param counts')
+    parser.add_argument('--wide_only', action='store_true',
+                        help='With --param_matched, train ONLY the *_wide '
+                             'controls; the base models come from the '
+                             'canonical session')
     parser.add_argument('--param_config', type=str, default=None,
                         help='JSON file from param_match.py with base_features per model')
 
@@ -561,6 +565,13 @@ def get_models_to_train(args) -> List[Dict[str, Any]]:
                 'display_name': f"{base_name}_wide",
                 'extra_kwargs': dict(override_kwargs),
             })
+
+        # The base models are the canonical session's job. Retraining them here
+        # costs a third of the group and, under a session name the generators
+        # do not special-case, puts a second copy of every baseline row next to
+        # the canonical one.
+        if args.wide_only:
+            models = [m for m in models if m['display_name'].endswith('_wide')]
 
     # Handle resume_from
     if args.resume_from:

@@ -79,13 +79,13 @@ covers all three candidate GPUs** — its arch list is
 and Blackwell (sm_120). It is also what every EF number on disk was measured
 against (torch 2.9.1 / 2.10.0, cuda 12.8).
 
-Set `TORCH_SPEC = None` to keep Colab's preinstalled torch — that is the
-combination most likely to have a matching prebuilt `mamba-ssm` wheel, and a
-source build costs 30–60 minutes and may fail. Run the shootout
-(`scripts/colab_gpu_shootout_cell.py`) first, see which works, then **hard-pin
-that version here and never change it mid-programme**. Colab updates its default
-torch silently; a programme spanning weeks would otherwise straddle two builds,
-which is the same class of confound as mixing GPUs.
+`TORCH_SPEC` is pinned to **torch 2.11.0**, the stack the shootout validated on
+G4 (Triton 3.6.0, mamba-ssm 2.3.2.post1; full kernel stack runs, and the Mamba-2
+{4 train, 6 fail} split replicates the published table). **Do not change it
+mid-programme.** Colab updates its default torch without warning, and a
+programme spanning several sessions would otherwise straddle two builds — the
+same class of confound as mixing GPUs. Every number the revision reports,
+EF included, is re-measured on this one stack.
 """))
 
 A(code("""
@@ -126,7 +126,40 @@ if os.path.exists('/content/mamba'):
 else:
     !git clone https://github.com/Seraf00/mamba.git /content/mamba
 %cd /content/mamba
-!pip install -q -r requirements.txt
+# Everything in requirements.txt EXCEPT torch and the SSM kernels, which the
+# cells above installed and pinned. The file's own ">=" pins would not
+# downgrade them -- but if the mamba-ssm build above failed, pip would retry it
+# here with build isolation, fail, and abort the whole install, leaving the
+# ordinary dependencies (albumentations, opencv, ...) missing too.
+!grep -viE '^(torch|torchvision|torchaudio|mamba-ssm|causal-conv1d)' requirements.txt > /tmp/req_colab.txt
+!pip install -q -r /tmp/req_colab.txt
+"""))
+
+A(code("""
+# Does the code just pulled support everything this notebook asks of it?
+# This notebook and the scripts it calls come from the same repository but can
+# be at different versions -- e.g. a notebook opened from a newer upload while
+# GitHub still has older scripts. Then a group cell fails hours in with
+# "unrecognized arguments". Check every flag the cells use, now.
+import subprocess, sys
+NEEDS = {
+    'scripts/train_all_models.py': ['--resume', '--resume_every', '--checkpoint_every',
+                                    '--pin', '--wide_only', '--position_only',
+                                    '--param_matched', '--num_shards'],
+    'scripts/evaluate_all_models.py': ['--pin'],
+    'scripts/yolo/eval_baseline_ef.py': ['--pin', '--checkpoint-dir'],
+}
+missing = []
+for script, flags in NEEDS.items():
+    h = subprocess.run([sys.executable, script, '--help'],
+                       capture_output=True, text=True).stdout
+    missing += [f'{script} {f}' for f in flags if f not in h]
+!git -C /content/mamba log -1 --format='code version: %h  %ad  %s' --date=short
+if missing:
+    raise RuntimeError('The code on this machine is OLDER than this notebook. '
+                       'Missing: ' + ', '.join(missing) + '. Push your latest '
+                       'commits to GitHub, then re-run the clone cell above.')
+print('code matches this notebook')
 """))
 
 A(code("""
@@ -170,7 +203,7 @@ available; the default is what was measured.
 """))
 
 A(code("""
-import subprocess, sys, time, json, glob
+import subprocess, sys, time, json, glob, shutil, hashlib
 from pathlib import Path
 
 # ---- canonical settings: do not vary these between groups ----
@@ -244,20 +277,30 @@ def _models_done(exp_dir):
 
 
 def _current(exp_dir):
-    # Last "Training: X" and "Epoch N/M |" lines across the shard logs. Plain
-    # string parsing, no regex: this code lives inside a string in the builder,
-    # and every backslash there needs escaping twice.
+    # The model being trained and its last COMPLETED epoch, from the logs.
+    # Model: the last "Training: X" line anywhere in the file -- tqdm output
+    # pushes it out of any fixed-size tail within an epoch. Epoch: the trainer's
+    # own summary line ("Epoch 37/100 | Train Loss: ..."); tqdm's bar also
+    # starts with "Epoch" and contains " | ", so match on "Train Loss".
     model, epoch = '', ''
     for log in sorted(exp_dir.glob('shard*.log')):
         try:
-            lines = log.read_text(errors='ignore')[-20000:].splitlines()
+            txt = log.read_text(errors='ignore')
         except OSError:
             continue
-        for ln in lines:
-            if ln.startswith('Training: '):
-                model = ln[len('Training: '):].strip()
-            elif ln.startswith('Epoch ') and ' | ' in ln:
-                epoch = ln.split()[1]
+        i = txt.rfind('\\nTraining: ')
+        if i >= 0:
+            model = txt[i + len('\\nTraining: '):].split('\\n', 1)[0].strip()
+        # Whole file, by the summary's own marker: no window can be assumed
+        # to still contain it after a long stretch of progress bars.
+        j = txt.rfind(' | Train Loss')
+        # Only if it belongs to the CURRENT model: an epoch line from before
+        # the latest "Training:" is the previous model's last epoch.
+        if j > i:
+            ls = max(txt.rfind(ch, 0, j) for ch in ('\\n', '\\r')) + 1
+            head = txt[ls:j].split()
+            if len(head) >= 2 and head[0] == 'Epoch':
+                epoch = head[1]
     return model, epoch
 
 
@@ -272,29 +315,46 @@ def run_group(exp_name, extra_args, shards=None, dry_run=False):
     args = BASE_ARGS + ['--exp_name', exp_name] + [str(a) for a in extra_args]
     exp_dir = Path(RESULTS_DIR) / exp_name
 
+    # Unbuffered: a child writing to a file block-buffers stdout, so the
+    # per-epoch lines would reach the log -- and the status line below -- in
+    # 8 KB bursts, dozens of epochs late, and whatever was buffered at a
+    # disconnect would be lost.
+    # TQDM_MININTERVAL: the progress bar redraws ~10 times a second, and into a
+    # log file each redraw is a new line -- megabytes per group, all synced to
+    # Drive. Every 30 s is plenty; the per-epoch summary line is unaffected.
+    env = {**os.environ, 'PYTHONUNBUFFERED': '1', 'TQDM_MININTERVAL': '30'}
+
     if dry_run:
         out = subprocess.run([sys.executable, 'scripts/train_all_models.py',
-                              *args, '--dry_run'], capture_output=True, text=True)
-        print(out.stdout[-3000:] or out.stderr[-3000:])
+                              *args, '--dry_run'], capture_output=True, text=True,
+                             env=env)
+        print(out.stdout[-3000:])
+        if out.returncode != 0:
+            print(out.stderr[-3000:])
         return exp_dir
 
     exp_dir.mkdir(parents=True, exist_ok=True)
     procs, logs = [], []
     for s in range(shards):
-        log = open(exp_dir / f'shard{s}.log', 'w')
+        # Append, never truncate: after a disconnect this log was restored
+        # from Drive, and it is the only record of the earlier session.
+        log = open(exp_dir / f'shard{s}.log', 'a')
+        log.write(f'\\n===== session start {time.strftime("%Y-%m-%d %H:%M:%S")} =====\\n')
+        log.flush()
         logs.append(log)
         procs.append(subprocess.Popen(
             [sys.executable, 'scripts/train_all_models.py', *args,
              '--num_shards', str(shards), '--shard', str(s)],
-            stdout=log, stderr=subprocess.STDOUT))
+            stdout=log, stderr=subprocess.STDOUT, env=env))
     print(f'{exp_name}: launched {shards} shards -> {exp_dir}/shard*.log')
 
     t0 = last_sync = time.time()
     while any(p.poll() is None for p in procs):
         alive = sum(p.poll() is None for p in procs)
         model, epoch = _current(exp_dir)
+        warn = ' | !! DRIVE SYNC FAILING' if _SYNC_ERR else ''
         print(f'\\r  {(time.time()-t0)/60:6.1f} min | {_models_done(exp_dir)} done '
-              f'| now: {model} epoch {epoch}' + ' ' * 10, end='')
+              f'| now: {model} epoch {epoch}{warn}' + ' ' * 10, end='')
         if time.time() - last_sync > SYNC_MINUTES * 60:
             save_to_drive(quiet=True)
             last_sync = time.time()
@@ -324,30 +384,103 @@ def run_group(exp_name, extra_args, shards=None, dry_run=False):
 
 # What survives a disconnect. last.pth is the resume state and must be here;
 # final_model.pth, checkpoint_epoch_*.pth and TensorBoard logs are read by
-# nothing downstream and would only fill Drive.
-_SYNC_FILTER = ['--include=*/', '--include=best_model.pth', '--include=last.pth',
+# nothing downstream and would only fill Drive. .tex/.png/.pdf are evaluation
+# outputs: Drive is how results leave Colab, so anything not listed never
+# reaches your machine.
+_BASE_FILTER = ['--include=*/', '--include=best_model.pth', '--include=last.pth',
                 '--include=*.json', '--include=*.csv', '--include=*.log',
-                '--include=*.jsonl', '--exclude=*']
+                '--include=*.jsonl', '--include=*.tex', '--include=*.png',
+                '--include=*.pdf', '--exclude=*']
+_SYNC_ERR = None   # last sync failure, shown in the status line until it clears
+
+
+def _offloaded():
+    # Groups whose weights you downloaded, verified and removed from Drive.
+    # Marked by OFFLOADED.json in the group folder (on Drive, so the mark
+    # survives a disconnect and is restored with everything else).
+    marks = set()
+    for root in (RESULTS_DIR, DRIVE_RESULTS):
+        if os.path.isdir(root):
+            marks |= {m.parent.name for m in Path(root).glob('*/OFFLOADED.json')}
+    return sorted(marks)
+
+
+def _sync_filter():
+    # rsync applies the FIRST matching rule, so these excludes must come before
+    # the includes. Without them the next sync would re-upload the weights you
+    # just deleted from Drive, because they are still on this machine's disk.
+    return [f'--exclude={g}/*/*.pth' for g in _offloaded()] + _BASE_FILTER
+
+
+def _require_mamba_fast():
+    # Without the CUDA fast path the trainer waits 10 seconds and then trains
+    # SSM models roughly 100x slower -- silently, for days. Refuse instead.
+    r = subprocess.run([sys.executable, '-c',
+                        'from models.modules import MambaBlock; '
+                        'import sys; sys.exit(0 if MambaBlock(dim=64, d_state=16).use_fast_path else 1)'],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError('mamba-ssm CUDA fast path unavailable -- fix the '
+                           'install (setup cell) before running R4/R5.\\n'
+                           + r.stderr[-500:])
+
+
+def drive_usage():
+    # Free space on the mounted Drive. Deleted files keep counting against the
+    # quota until the Drive TRASH is emptied.
+    try:
+        u = shutil.disk_usage('/content/drive/MyDrive')
+        print(f'Drive: {u.used / 1e9:.1f} GB used of {u.total / 1e9:.1f} GB, '
+              f'{u.free / 1e9:.1f} GB free')
+        return u.free / 1e9
+    except OSError as e:
+        print(f'Drive usage unavailable: {e}')
+        return None
+
+
+def _sync_failed(msg):
+    global _SYNC_ERR
+    _SYNC_ERR = msg[:120]
+    print()
+    print('!' * 78)
+    print('!! DRIVE SYNC FAILED -- training continues, but progress since the last')
+    print('!! successful sync exists ONLY on this machine. A disconnect loses it.')
+    print(f'!! {_SYNC_ERR}')
+    print('!! If Drive is full: empty the Drive Trash, and see "If Drive fills up".')
+    print('!' * 78)
+    return False
 
 
 def save_to_drive(quiet=False):
-    os.makedirs(DRIVE_RESULTS, exist_ok=True)
-    r = subprocess.run(['rsync', '-a', *_SYNC_FILTER,
-                        f'{RESULTS_DIR}/', f'{DRIVE_RESULTS}/'],
-                       capture_output=True, text=True)
+    # Must never raise. It runs inside the training cell's polling loop, and an
+    # exception there ends the loop -- training carries on headless with NO
+    # further syncs, the worst outcome on a full or flaky Drive. Every failure
+    # becomes a False return and a visible warning instead.
+    global _SYNC_ERR
+    try:
+        os.makedirs(DRIVE_RESULTS, exist_ok=True)
+        r = subprocess.run(['rsync', '-a', *_sync_filter(),
+                            f'{RESULTS_DIR}/', f'{DRIVE_RESULTS}/'],
+                           capture_output=True, text=True)
+    except OSError as e:
+        return _sync_failed(f'{type(e).__name__}: {e}')
     if r.returncode != 0:
-        print(f'\\n  [sync] rsync failed: {r.stderr[-300:]}')
-        return
+        return _sync_failed((r.stderr.strip().splitlines() or ['rsync failed'])[-1])
+    _SYNC_ERR = None
     # rsync never deletes, so a finished model's last.pth -- removed locally
     # when training completes -- would stay on Drive for good: full optimizer
     # state, up to ~3 GB per model. Not rsync --delete: on a fresh session run
     # before restore_from_drive(), that would wipe Drive. Instead remove only
     # resume files whose model has a results.json, i.e. is certainly finished.
-    for lp in Path(DRIVE_RESULTS).glob('*/*/last.pth'):
-        if (lp.parent / 'results.json').exists():
-            lp.unlink()
+    try:
+        for lp in Path(DRIVE_RESULTS).glob('*/*/last.pth'):
+            if (lp.parent / 'results.json').exists():
+                lp.unlink()
+    except OSError as e:
+        print(f'  [sync] could not remove a stale last.pth: {e}')
     if not quiet:
         print(f'synced {RESULTS_DIR} -> {DRIVE_RESULTS}')
+    return True
 
 
 def restore_from_drive():
@@ -356,10 +489,11 @@ def restore_from_drive():
     # disconnect it restores results.json for finished models and last.pth for
     # the interrupted one, which is what --resume reads.
     os.makedirs(RESULTS_DIR, exist_ok=True)
+    drive_usage()
     if not os.path.isdir(DRIVE_RESULTS):
         print('nothing on Drive yet -- fresh start')
         return
-    subprocess.run(['rsync', '-a', *_SYNC_FILTER,
+    subprocess.run(['rsync', '-a', *_sync_filter(),
                     f'{DRIVE_RESULTS}/', f'{RESULTS_DIR}/'], check=True)
     done = sorted(Path(RESULTS_DIR).glob('*/*/results.json'))
     partial = sorted(pth for pth in Path(RESULTS_DIR).glob('*/*/last.pth')
@@ -368,6 +502,90 @@ def restore_from_drive():
           f'{len(partial)} interrupted mid-training')
     for pth in partial:
         print(f'  will resume: {pth.parent.parent.name}/{pth.parent.name}')
+    off = _offloaded()
+    if off:
+        print(f'  offloaded to your PC (weights not on Drive): {", ".join(off)}')
+
+
+def _sha256(path, chunk=1 << 22):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for b in iter(lambda: f.read(chunk), b''):
+            h.update(b)
+    return h.hexdigest()
+
+
+def offload_check(group):
+    # Step 1 of freeing Drive: is this group safe to move off Drive, and what
+    # exactly must your download contain? Writes MANIFEST.json (size + SHA-256
+    # of every checkpoint) and syncs it, so scripts/verify_offload.py on your PC
+    # can prove the download is complete BEFORE anything is deleted.
+    d = Path(RESULTS_DIR) / group
+    problems = []
+    if not d.is_dir():
+        print(f'{group}: not on this machine'); return False
+    if not (d / 'all_results.json').exists():
+        problems.append('group has not finished (no all_results.json)')
+    pending = [x.parent.name for x in d.glob('*/last.pth')
+               if not (x.parent / 'results.json').exists()]
+    if pending:
+        problems.append(f'still training: {", ".join(pending)}')
+    if not (d / 'evaluation' / 'evaluation_results.json').exists():
+        problems.append('not evaluated yet -- run the Evaluation cells first; '
+                        'they need the weights, which will not be here afterwards')
+    if not (d / 'baseline_ef_native.json').exists():
+        problems.append('EF not evaluated yet (baseline_ef_native.json missing)')
+    ckpts = sorted(d.glob('*/best_model.pth'))
+    if not ckpts:
+        problems.append('no checkpoints on this machine to fingerprint')
+    if problems:
+        print(f'{group}: NOT ready to offload')
+        for p_ in problems:
+            print(f'  - {p_}')
+        return False
+    print(f'{group}: fingerprinting {len(ckpts)} checkpoints ...')
+    manifest = {str(c.relative_to(d)): {'bytes': c.stat().st_size,
+                                        'sha256': _sha256(c)} for c in ckpts}
+    (d / 'MANIFEST.json').write_text(json.dumps(manifest, indent=1))
+    if not save_to_drive(quiet=True):
+        print('  sync failed -- free some Drive space first'); return False
+    gb = sum(v['bytes'] for v in manifest.values()) / 1e9
+    print(f'  ready. {gb:.1f} GB of checkpoints; MANIFEST.json is on Drive.')
+    print('  Next, on your PC:')
+    print(f'    1. download MyDrive/Paper1/results_revision/{group} into '
+          f'D:/Papers/Paper1/results_revision/{group}')
+    print(f'    2. python scripts/verify_offload.py results_revision/{group}')
+    print(f'    3. only if it prints ALL VERIFIED: offload("{group}", '
+          f'i_have_verified_the_download=True)')
+    return True
+
+
+def offload(group, i_have_verified_the_download=False):
+    # Step 2: remove this group's checkpoints from Drive and mark it offloaded,
+    # so no later sync re-uploads them and no later evaluation runs on a group
+    # whose weights are gone. Small files (results, evaluation, logs) stay on
+    # Drive: resume needs results.json to know these models are finished.
+    # Deleted files go to the Drive Trash and still count until it is emptied.
+    if not i_have_verified_the_download:
+        print('Not deleting anything. Run scripts/verify_offload.py on your PC '
+              'first; call again with i_have_verified_the_download=True only '
+              'when it prints ALL VERIFIED.')
+        return
+    if not (Path(RESULTS_DIR) / group / 'MANIFEST.json').exists():
+        print(f'{group}: run offload_check("{group}") first.'); return
+    dd = Path(DRIVE_RESULTS) / group
+    removed = 0
+    for c in dd.glob('*/*.pth'):
+        removed += c.stat().st_size
+        c.unlink()
+    mark = {'offloaded_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'removed_bytes': removed}
+    for root in (RESULTS_DIR, DRIVE_RESULTS):
+        (Path(root) / group / 'OFFLOADED.json').write_text(json.dumps(mark))
+    print(f'{group}: removed {removed / 1e9:.1f} GB of checkpoints from Drive '
+          f'(now in the Drive Trash -- empty it to get the space back).')
+    print('  The weights are still on this machine until the runtime ends, and '
+          'on your PC.')
 """))
 
 A(md("""
@@ -478,7 +696,7 @@ A(code("""
     --output_json {RESULTS_DIR}/param_config_r3.json
 
 run_group('r3_param_matched',
-          ['--base_only', '--param_matched',
+          ['--base_only', '--param_matched', '--wide_only',
            '--param_config', f'{RESULTS_DIR}/param_config_r3.json'])
 save_to_drive()
 """))
@@ -490,14 +708,23 @@ A(md("""
 Mamba, Mamba-2 and VMamba variants, all at the canonical batch. Without this,
 Paper D's base-vs-SSM comparison still crosses batch sizes.
 
-Two things will fail here and both are results, not bugs:
-`mamba_dense_context_unet` + VMamba is skipped as architecturally incompatible
-(>12 GiB backward spike), and the Mamba-2 arms whose padded head dimension pushes
-the Triton chunk-scan past the shared-memory ceiling will raise. The failure
-table is generated from what this session records, so let them fail.
+Some runs fail here, and each failure is a result to report, not a bug to fix:
+
+- `mamba_dense_context_unet` + VMamba is skipped as architecturally
+  incompatible (>12 GiB backward spike).
+- Six Mamba-2 arms fail, as in the published table. On G4, five hit the Triton
+  shared-memory ceiling (Swin, UNet-V1, TransUNet, Pure-Mamba, FPN).
+  `mamba_unet_v2` fails **earlier and differently**: its 682 channels are not a
+  multiple of 8, which causal-conv1d requires. The original run recorded a
+  shared-memory failure for it, so the outcome is the same but the cause changed
+  with the software stack. Report the cause as measured.
+
+Failures are recorded in `all_results.json` with their error message and cost
+seconds each. Let them fail.
 """))
 
 A(code("""
+_require_mamba_fast()
 run_group('r4_ssm_batch8',
           ['--mamba_only', '--mamba_variants', 'mamba', 'mamba2', 'vmamba'])
 save_to_drive()
@@ -522,6 +749,7 @@ architectures, not nine. Say that rather than averaging a ragged grid.
 """))
 
 A(code("""
+_require_mamba_fast()
 run_group('r5_position',
           ['--position_ablation', '--position_only',
            '--mamba_variants', 'mamba', 'vmamba'])
@@ -532,61 +760,86 @@ A(md("""
 ---
 ## Evaluation
 
-Inference only. `eval_baseline_ef.py` computes EF at **native resolution** —
-the defect it fixes was computing volumes on the 256 px grid, which is EF-1.
+Inference only, pinned like training, and **in this order**:
+
+1. `evaluate_all_models.py`: test Dice, IoU, HD95, ASSD. It writes
+   `evaluation_results.json` from scratch.
+2. `eval_baseline_ef.py`: EF at **native resolution**. The defect it fixes was
+   computing volumes on the 256 px grid (EF-1).
+3. `colab_session.py`: injects per-patient EF arrays into
+   `evaluation_results.json` for the Bland–Altman figure, plus quality-strata
+   Dice and overlays. Run it before step 1 and step 1 erases what it injected.
+
+R2's seed runs are evaluated too: their test metrics are the seed floor.
 """))
 
 A(code("""
-SESSIONS = ['r1_canonical', 'r3_param_matched', 'r4_ssm_batch8', 'r5_position']
+# R2 is included: its test metrics ARE the seed floor, which is the reason R2
+# exists.
+SESSIONS = ['r1_canonical', 'r2_seed1', 'r2_seed2', 'r3_param_matched',
+            'r4_ssm_batch8', 'r5_position']
 
+# 1) Test metrics: Dice, IoU, HD95, ASSD -> <session>/evaluation/.
+#    MUST run first: it writes evaluation_results.json from scratch, so running
+#    it after colab_session.py would erase the per-patient EF arrays that
+#    colab_session injects into that same file (the Bland-Altman data).
 for s in SESSIONS:
     d = Path(RESULTS_DIR) / s
     if not d.exists():
         print(f'skip {s} (not trained)'); continue
-    !python scripts/yolo/eval_baseline_ef.py \\
-        --checkpoint-dir {d} --data-dir {DATA_DIR} --pin full \\
-        --out {d}/baseline_ef_native.json
+    if s in _offloaded():
+        print(f'skip {s} (offloaded -- evaluated before its weights left)'); continue
+    !python scripts/evaluate_all_models.py --checkpoint_dir {d} \\
+        --data_dir {DATA_DIR} --pin full
+save_to_drive()
 """))
 
 A(code("""
-# Per-patient EF arrays (Bland-Altman), quality-stratified Dice, overlay grids.
+# 2) EF at native resolution (the EF-1 fix), pinned.
 for s in SESSIONS:
     d = Path(RESULTS_DIR) / s
-    if not d.exists():
+    if not d.exists() or s in _offloaded():
+        continue
+    !python scripts/yolo/eval_baseline_ef.py \\
+        --checkpoint-dir {d} --data-dir {DATA_DIR} --pin full \\
+        --out {d}/baseline_ef_native.json
+save_to_drive()
+"""))
+
+A(code("""
+# 3) Per-patient EF arrays injected into evaluation_results.json (Bland-Altman),
+#    quality-stratified Dice, overlay grids. After step 1, never before.
+for s in SESSIONS:
+    d = Path(RESULTS_DIR) / s
+    if not d.exists() or s in _offloaded():
         continue
     !python scripts/colab_session.py \\
         --checkpoint_dir {d} --data_dir {DATA_DIR} \\
         --out_dir {RESULTS_DIR}/session_out/{s}
-"""))
-
-A(code("""
-# Per-model test metrics: Dice, IoU, HD95, ASSD.
-for s in SESSIONS:
-    d = Path(RESULTS_DIR) / s
-    if not d.exists():
-        continue
-    !python scripts/evaluate_all_models.py \\
-        --checkpoint_dir {d} --data_dir {DATA_DIR}
-
 save_to_drive()
 """))
 
 A(md("""
 ---
-## Tables
+## Tables — build them on your machine, not here
 
-Because the consistency contract holds — every number in all four manuscripts
-comes from a generator reading a named artefact — this is minutes, and
-`check_number_provenance.py --strict` fails the build if anything was
-hand-typed back in.
+The manuscripts are not on this runtime (Paper D is a separate repository), so
+tables generated here would land in a throwaway clone. After the last group:
+
+1. Copy `MyDrive/Paper1/results_revision/` from Drive into
+   `D:/Papers/Paper1/results_revision/` on your machine.
+2. Run the table generators there.
+
+**Before that works, the generators need one change.** `fill_tables.py` still
+reads the pre-revision session names (`base_models`, `param_matched`, ...) and
+takes EF from fixed files under `results/yolo/`. Pointed at the new sessions as
+they stand, it would pair the NEW Dice with the OLD EF for every model whose
+name did not change, and it would not raise an error. Wiring it to
+`results_revision/` is the next piece of work, and it does not block training:
+start R1 now.
 """))
 
-A(code("""
-!python scripts/fill_tables.py --results_root {RESULTS_DIR} \\
-    --benchmark_csv {RESULTS_DIR}/benchmark_efficiency.csv
-!python scripts/yolo/make_journal_tables.py
-!python scripts/check_number_provenance.py --strict
-"""))
+
 
 A(md("""
 ---
@@ -629,7 +882,8 @@ for g in ['r1_canonical', 'r2_seed1', 'r2_seed2', 'r3_param_matched',
     if not d.exists():
         print(f'{g:18s} not started'); continue
     done = sorted(p.parent.name for p in d.glob('*/results.json'))
-    part = sorted(p.parent.name for p in d.glob('*/last.pth'))
+    part = sorted(p.parent.name for p in d.glob('*/last.pth')
+                  if not (p.parent / 'results.json').exists())
     errs = []
     if (d / 'all_results.json').exists():
         try:
@@ -639,7 +893,56 @@ for g in ['r1_canonical', 'r2_seed1', 'r2_seed2', 'r3_param_matched',
             pass
     print(f'{g:18s} {len(done):3d} finished' +
           (f' | resuming: {", ".join(part)}' if part else '') +
-          (f' | FAILED: {", ".join(errs)}' if errs else ''))
+          (f' | FAILED: {", ".join(errs)}' if errs else '') +
+          (' | OFFLOADED to PC' if g in _offloaded() else ''))
+drive_usage()
+"""))
+
+A(md("""
+---
+## If Drive fills up
+
+The programme's checkpoints total roughly **20–32 GB** (R5's 68 arms are most of
+it), measured from the equivalent earlier sessions. A free Google account has
+15 GB, shared with Gmail and Photos, so on a free plan it will not all fit at
+once. Two options:
+
+**A. More storage.** Google One 100 GB costs about the same per month as a
+coffee. Nothing below is then needed.
+
+**B. Move each finished group to your PC.** Only when the group has **finished
+and been evaluated**:
+
+1. Run the three Evaluation cells. They need the weights, and the weights will
+   not be on Drive afterwards.
+2. `offload_check('r1_canonical')` checks the group is finished and evaluated,
+   fingerprints every checkpoint into `MANIFEST.json`, and syncs it.
+3. On your PC, download `MyDrive/Paper1/results_revision/r1_canonical` into
+   `D:/Papers/Paper1/results_revision/r1_canonical`, then run
+   `python scripts/verify_offload.py results_revision/r1_canonical`.
+4. **Only if it prints `ALL VERIFIED`**:
+   `offload('r1_canonical', i_have_verified_the_download=True)`.
+5. **Empty the Drive Trash.** Deleted files keep counting until you do.
+
+After offloading, the notebook **never re-uploads** that group's weights (they
+are still on this machine's disk until the runtime ends). It also **skips** the
+group in Evaluation, so a later run cannot overwrite good results with empty
+ones. The small files stay on Drive, because resume needs `results.json` to know
+those models are finished.
+
+**Do not delete checkpoints from Drive by hand while training runs.** The next
+sync re-uploads anything still on this machine, and a hand-deleted group has no
+offload mark to protect its evaluation.
+
+If a sync fails, the status line shows `!! DRIVE SYNC FAILING` and a banner
+explains it. Training carries on, but anything since the last good sync exists
+only on this machine.
+"""))
+
+A(code("""
+drive_usage()
+# offload_check('r1_canonical')
+# offload('r1_canonical', i_have_verified_the_download=True)
 """))
 
 # --------------------------------------------------------------------------

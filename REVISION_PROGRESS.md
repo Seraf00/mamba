@@ -673,3 +673,41 @@ Tests:
   deletes nothing; restore reports only real interruptions.
 - `scripts/test_resume_e2e.py`: real CAMUS + DeepLabV3+, process tree killed
   mid-model, same command relaunched twice (resume, then skip).
+
+---
+
+## Notebook review (2026-09-18)
+
+Re-read every cell of `notebooks/colab_revision.ipynb` in run order, then
+executed the settings + helper cells, extracted from the built notebook, against
+the real trainer in WSL (`scripts/test_notebook_rungroup.py`). Found and fixed:
+
+| # | problem | consequence | fix |
+|---|---|---|---|
+| 1 | evaluation ran `colab_session.py` BEFORE `evaluate_all_models.py` | the second rewrites `evaluation_results.json` and **erased the per-patient EF arrays** (Bland-Altman data) | reordered: evaluate -> EF -> colab_session |
+| 2 | Tables cell ran on Colab | manuscripts are not there (Paper D is another repo); and `fill_tables.py` reads the OLD session names + fixed `results/yolo/` EF files, so it would **pair new Dice with old EF, without error** | cell removed; tables built locally. Generator rewiring is the open item below |
+| 3 | R2 not evaluated | the seed floor, R2's whole purpose, had no test metrics | R2 added to SESSIONS |
+| 4 | R3 retrained the 9 base models (15 runs) | ~1/3 of R3 wasted, duplicate baseline rows | `--wide_only` -> 6 runs |
+| 5 | `evaluate_all_models.py` unpinned | test Dice/HD95 under cuDNN TF32 while training + EF pinned | `--pin` (default full) |
+| 6 | sync filter lacked `.tex/.png/.pdf` | T5 table, overlays, Bland-Altman figures never left Colab | added |
+| 7 | child stdout block-buffered | log and status line dozens of epochs late; buffered lines lost at disconnect | `PYTHONUNBUFFERED=1` |
+| 8 | shard log opened with `'w'` | a relaunch erased the previous session's log | append + session header |
+| 9 | status line parsed a 20 KB tail and matched tqdm's bar | model name vanished; epoch read "1:"; new model showed the previous model's epoch | whole-file parse on the summary marker, epoch must follow the latest `Training:` (`test_notebook_status.py`, 4/4) |
+| 10 | no guard before R4/R5 | without mamba-ssm's fast path the trainer waits 10 s then trains ~100x slower | `_require_mamba_fast()` raises first |
+| 11 | `pip install -r requirements.txt` included torch/mamba | a failed mamba build would abort the whole install | install everything else only |
+| 12 | stale markdown | "set TORCH_SPEC=None", all Mamba-2 failures called shared-memory (UNet-V2 is causal-conv1d alignment on G4), no ordering note | rewritten |
+| - | tqdm redraws | MB of progress lines per group synced to Drive | `TQDM_MININTERVAL=30` |
+
+Verified by execution: dry-run model counts R1 9 / R2 4 / R3 6 / R4 29 /
+R5 68; a real one-epoch group trains, exits 0, syncs to Drive, logs
+`Early stopping (effective): OFF`; relaunch appends the log and skips the
+finished model; mamba guard passes where mamba-ssm is installed.
+`test_notebook_sync.py` 8/8 with the new filter.
+
+### Open -- blocks TABLES, not training
+
+`fill_tables.py` must be pointed at `results_revision/` sessions
+(`r1_canonical`, `r2_seed*`, `r3_param_matched`, `r4_ssm_batch8`,
+`r5_position`) and at each session's `baseline_ef_native.json`, instead of
+`base_models`/`param_matched`/... and `results/yolo/*.json`. As it stands it
+would silently attach OLD EF to NEW Dice for every unchanged model name.
