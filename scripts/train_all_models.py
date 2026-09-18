@@ -396,6 +396,18 @@ def parse_args():
                         help='Split the training plan across this many processes')
     parser.add_argument('--shard', type=int, default=0,
                         help='Which shard this process trains (0-indexed)')
+    parser.add_argument('--resume', action='store_true',
+                        help='Skip models whose results.json exists and continue '
+                             'an interrupted model from its last.pth. Safe to '
+                             'pass on a first run.')
+    parser.add_argument('--resume_every', type=int, default=5,
+                        help='With --resume, write last.pth every N epochs '
+                             '(the most an interruption can cost)')
+    parser.add_argument('--checkpoint_every', type=int, default=10,
+                        help='Periodic checkpoint_epoch_N.pth; 0 disables. '
+                             'Nothing downstream reads these, and each holds '
+                             'full optimizer state, so on Drive they are pure '
+                             'cost once --resume is on.')
     parser.add_argument('--merge_shards', action='store_true',
                         help='Do not train: merge all_results_shard*.json in '
                              'the experiment directory into all_results.json')
@@ -600,7 +612,21 @@ def train_single_model(
     model_name = model_config['name']
     mamba_type = model_config['mamba_type']
     display_name = model_config['display_name']
-    
+
+    # results.json is written only after a model finishes, so its presence
+    # means there is nothing left to do. Returning it -- rather than skipping
+    # the model outright -- keeps the finished result in all_results.json,
+    # which the resumed session rewrites from scratch.
+    if args.resume:
+        done = exp_dir / display_name / 'results.json'
+        if done.exists():
+            with open(done) as f:
+                cached = json.load(f)
+            print(f"\n[resume] {display_name}: already finished "
+                  f"({cached.get('epochs_trained')} epochs, best val Dice "
+                  f"{cached.get('best_val_dice', 0):.4f}) -- skipping")
+            return cached
+
     print(f"\n{'='*70}")
     print(f"Training: {display_name}")
     if torch.cuda.is_available():
@@ -711,8 +737,24 @@ def train_single_model(
         num_workers=args.num_workers,
         max_grad_norm=model_overrides.get('max_grad_norm', 0.0),
         gradient_accumulation_steps=accum_steps,
+        # The Trainer has its OWN early-stopping counter, independent of the
+        # EarlyStopping callback, and TrainingConfig defaults it to ON with
+        # patience 20. Constructing the config without these two fields left it
+        # on, so "--early_stopping 0" disabled only the callback and every run
+        # still stopped at patience 20 -- the NEW-1 defect, silently intact.
+        early_stopping=args.early_stopping > 0,
+        patience=args.early_stopping if args.early_stopping > 0 else args.epochs,
+        save_every=args.checkpoint_every,
+        resume_every=args.resume_every if args.resume else 0,
     )
-    
+
+    # Print what the TRAINER will do, not what the flag says. The flag said
+    # "disabled" for a whole revision while the trainer's own counter was on.
+    print(f"  Early stopping (effective): "
+          f"{'patience ' + str(config.patience) if config.early_stopping else 'OFF'}"
+          f"  |  resume state every "
+          f"{str(config.resume_every) + ' epochs' if config.resume_every else 'off'}")
+
     # Callbacks
     callbacks = [
         ModelCheckpoint(save_dir=str(model_dir), monitor='val_dice', mode='max'),
@@ -733,10 +775,22 @@ def train_single_model(
         callbacks=callbacks
     )
     
+    # Continue an interrupted run from its last resume point, if one exists.
+    last = model_dir / 'last.pth'
+    if args.resume and last.exists():
+        try:
+            trainer.load_checkpoint(str(last))
+        except Exception as e:
+            # A file that will not load is worth reporting and not worth dying
+            # over: the model restarts from epoch 0, which costs time only.
+            print(f"  [resume] could not load {last} ({type(e).__name__}: {e}); "
+                  f"restarting this model from epoch 1")
+            trainer.start_epoch = 0
+
     # Train
-    start_time = time.time()
     history = trainer.train()
-    training_time = time.time() - start_time
+    # Cumulative across interruptions, so it still describes the whole run.
+    training_time = trainer.elapsed_seconds
     
     # Get best metrics
     best_val_dice = trainer.best_val_dice if hasattr(trainer, 'best_val_dice') else max(history.get('val_dice', [0]))
@@ -887,6 +941,10 @@ def train_single_model_cv(
             save_dir=str(fold_dir), device=str(device),
             use_amp=args.mixed_precision, num_workers=args.num_workers,
             max_grad_norm=model_overrides.get('max_grad_norm', 0.0),
+            # Same fix as the main path: the Trainer's internal counter must
+            # follow --early_stopping, or it stays on at patience 20.
+            early_stopping=args.early_stopping > 0,
+            patience=args.early_stopping if args.early_stopping > 0 else args.epochs,
         )
 
         callbacks = [
@@ -978,6 +1036,18 @@ def merge_shard_results(exp_dir: Path) -> None:
 
 
 def main():
+    # Several status lines print emoji. On a console or pipe whose encoding
+    # cannot represent them (Windows cp1252), print() raises -- once at the very
+    # end of a successful run, turning it into exit code 1 after everything was
+    # saved, and once inside check_mamba_installation, where a try/except hid it
+    # and replaced the real kernel status with "could not check". Replace
+    # unencodable characters instead of failing.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors='replace')
+        except (AttributeError, ValueError):
+            pass
+
     args = parse_args()
 
     # Before anything touches CUDA. Off by default so the sessions already on

@@ -180,8 +180,36 @@ class CSVLogger:
         self.header_written = False
     
     def on_train_begin(self, trainer):
-        """Open file."""
-        self.file = open(self.filename, 'w')
+        """Open file -- appending when the trainer is resuming.
+
+        Opening with 'w' on a resumed run would erase every epoch logged before
+        the interruption, and training_log.csv is what the convergence checks
+        read to count epochs.
+        """
+        start = getattr(trainer, 'start_epoch', 0)
+        path = Path(self.filename)
+        if start > 0 and path.exists():
+            # A crash can land after an epoch's row was written but before the
+            # resume state caught up, so the file may run AHEAD of it. Those
+            # epochs are about to be re-run; keep only rows before start_epoch
+            # or they would appear twice.
+            lines = path.read_text().splitlines()
+            kept = lines[:1]
+            if lines:
+                cols = lines[0].split(',')
+                ei = cols.index('epoch') if 'epoch' in cols else None
+                for row in lines[1:]:
+                    vals = row.split(',')
+                    try:
+                        if ei is not None and int(float(vals[ei])) < start:
+                            kept.append(row)
+                    except (ValueError, IndexError):
+                        pass
+            path.write_text('\n'.join(kept) + ('\n' if kept else ''))
+            self.file = open(self.filename, 'a')
+            self.header_written = bool(kept)
+        else:
+            self.file = open(self.filename, 'w')
     
     def on_epoch_end(self, trainer, epoch: int, logs: Dict[str, Any]):
         """Write metrics."""

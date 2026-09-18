@@ -561,3 +561,115 @@ the sessions in `results/` were produced.
 - vCPU, not VRAM, caps concurrency: `NUM_SHARDS * (NUM_WORKERS+1)` vs core count.
 - Paper B still needs ~500 characters cut for its declarations.
 - ADMIN-1 author items; TRACE-1.2/1.3; LAT-1 re-timing.
+
+---
+
+## GPU decision: RTX PRO 6000 Blackwell ("G4") measured (2026-09-18)
+
+Standalone battery `scripts/colab_gpu_shootout_cell.py`, run on Colab's G4:
+sm_120, 188 SMs, 95 GB, 48 vCPU, torch 2.11.0+cu128, Triton 3.6.0,
+mamba-ssm 2.3.2.post1. Max shared memory per block 101,376 B -- same as Ada.
+
+| check | result |
+|---|---|
+| kernel stack | triton, causal-conv1d, Mamba-1, Mamba-2 all execute |
+| Mamba-2 | **4 train / 6 fail -- replicates T10 and the original run exactly** |
+| DenseContext @ batch 8 | fits, no micro-batching |
+| determinism | bit-identical once pinned; TF32 default matmul=off, cuDNN=ON |
+| 1 job | 45.03 it/s (12.4x the RTX 4060) |
+| 8 jobs | 47.73 it/s aggregate -- 1.06x, 13% efficiency |
+
+**Decision input:** G4 passes every disqualifying check. R1-R5 ~49 h at one job
+(601.9 h measured locally x 3.64/45.03). Estimate is UNet-shaped; check R1's
+first epochs before trusting it for SSM and heavy models.
+
+### Corrections this forced -- all in chat/tools, none in the papers
+
+1. **The 1280*P + 512 formula was extrapolated below its data.** Fitted to the
+   two measured points (P=256 -> 328,192; P=512 -> 655,872), then extended down
+   to predict 164,352 B for head_dim 128. G4 runs head_dim 128 on 101,376 B, so
+   the extrapolation is false; and two points fit a two-parameter line exactly,
+   so the "exact fit" was never evidence. The repo already contradicted it:
+   `results/mamba2_models/all_results.json` shows the same four variants
+   training. Claims withdrawn from chat: "Ada/A100 run 1 of 10", "three models
+   miss A100 by 512 bytes", "H100 would force a s4.3 rewrite".
+   **The papers never used the formula**: T10 reports Triton's own `Required:`
+   bytes via `fill_tables._probe_required_bytes`, and no .tex contains it.
+   From measured requests, all three candidate GPUs give the same {4, 6}: every
+   failing variant needs >= 328,192 B, above even H100's 227,328.
+   Fixed: `gpu_shootout.py` now predicts from `MAMBA2_MEASURED_REQUEST`; the
+   Colab cell reports the kernel's own measured bytes.
+2. **Concurrency does not scale.** Separate CUDA processes time-slice the GPU
+   without MPS. Flat on both a 24-SM and a 188-SM card, so it was never about SM
+   count. Notebook now defaults `NUM_SHARDS = 1`, `NUM_WORKERS = 8`.
+3. **"Avoid G4" was overcautious**: the sm_120 stack installed and ran on
+   Colab's default torch.
+4. **DeepLabV3+ Dice.** 0.8602 -> 0.9140 is TEST Dice and matches T1; I had
+   "corrected" it to 0.8387 -> 0.9076, which is VALIDATION Dice. Both real,
+   different splits. Reader-facing text uses test Dice. On test Dice, five
+   models that ran full length in both sessions differ by -0.007..+0.006;
+   truncated DeepLabV3+ +0.054, UNet-V2 +0.017.
+
+### New, separate from shared memory
+
+`mamba_unet_v2` (d_model 341, d_inner 682) fails on G4 with a causal-conv1d
+assertion -- channels must be a multiple of 8 -- before reaching the scan
+kernel. The original run recorded a shared-memory failure for it. Same outcome,
+different cause on a newer stack; d_model 341 (~1024/3) looks like a channel
+split worth checking in the model code.
+
+### Stale published artefact
+
+Schedule artifact 4b1b7b35, item 06, states the formula "fits exactly at both
+observed points" as evidence. Not republished -- needs the user's go-ahead.
+
+---
+
+## CRITICAL: early stopping was never off; resume built (2026-09-18)
+
+**`--early_stopping 0` did not disable early stopping.** `training.Trainer`
+has its own counter (`TrainingConfig.early_stopping=True, patience=20` by
+default), separate from the EarlyStopping callback. `train_all_models.py` built
+`TrainingConfig` without those fields, so the flag removed only the callback.
+Every revision run would have stopped at patience 20 again, reproducing NEW-1.
+It was declared fixed after checking only the callback. Pre-revision sessions
+were unaffected (20 in both places). Fixed in both config constructions; each
+model now logs `Early stopping (effective): OFF` from the config itself. Other
+entry points checked: `train.py` (not in the pipeline), Paper2
+`train_ablation.py` and Paper3 `train_refinements.py` pass the field explicitly.
+
+**Resume, which did not exist.** Before this, a disconnect meant:
+- restarting the interrupted model from epoch 0;
+- `--resume_from` rewriting all_results.json without the finished models;
+- the notebook crashing after every group at NUM_SHARDS=1 (merge found no shard
+  files).
+
+Now:
+- `Trainer`: `start_epoch`; checkpoints add AMP scaler, RNG (torch/cuda/numpy/
+  python), patience counter and cumulative elapsed time; atomic write
+  (tmp + rename); rolling `last.pth` every `resume_every` epochs, deleted on
+  completion; ModelCheckpoint's best score restored (no worse model overwriting
+  best_model.pth); if best_model.pth is newer than the resume state, its score
+  is adopted.
+- `CSVLogger`: appends on resume, dropping rows the resume state does not
+  cover (so a crash between the CSV write and last.pth does not duplicate
+  epochs).
+- `train_all_models`: `--resume` (skip models with results.json, continue from
+  last.pth), `--resume_every` (5), `--checkpoint_every` (0 in the notebook;
+  nothing reads periodic checkpoints). `training_time_seconds` is cumulative.
+- Notebook: `--resume` in BASE_ARGS; sync to Drive every 10 min during training;
+  `restore_from_drive()` at session start; own Drive folder `results_revision`;
+  merge only when sharded; torch pinned to 2.11.0; a status cell per group.
+
+Tests:
+- `scripts/test_trainer_resume.py`: 15/15. Early stopping off/on with a
+  flat-Dice control. Interrupted + resumed run bit-identical to uninterrupted
+  (weights and full history) on GPU with AMP. CSV holds each epoch exactly once.
+  best_model score consistent. last.pth cleaned up. Found and fixed an RNG-state
+  device bug that would have crashed every resume.
+- `scripts/test_notebook_sync.py` (WSL/Colab, needs rsync): 8/8, on the
+  notebook's own extracted code. Correct files reach Drive; a finished model's
+  stale last.pth is removed from Drive; saving an empty disk before restoring
+  deletes nothing; restore reports only real interruptions.
+- `scripts/test_resume_e2e.py`: real CAMUS + DeepLabV3+, process tree killed
+  mid-model, same command relaunched twice (resume, then skip).

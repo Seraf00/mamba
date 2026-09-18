@@ -36,8 +36,13 @@ class TrainingConfig:
     
     # Checkpointing
     save_dir: str = './checkpoints'
-    save_every: int = 10
+    save_every: int = 10          # periodic checkpoint_epoch_N.pth; <= 0 disables
     save_best: bool = True
+    # Rolling resume state (last.pth): full optimizer/scheduler/scaler/RNG state,
+    # overwritten every `resume_every` epochs and deleted when training finishes.
+    # 0 disables. Lets an interrupted run continue at the next epoch instead of
+    # restarting a 100-epoch model from zero.
+    resume_every: int = 0
     
     # Early stopping
     early_stopping: bool = True
@@ -103,6 +108,11 @@ class Trainer:
         
         # State
         self.current_epoch = 0
+        self.start_epoch = 0          # > 0 only after load_checkpoint()
+        self.patience_counter = 0
+        # Wall time spent training, carried across a resume so that
+        # training_time_seconds describes the whole run, not the last session.
+        self.elapsed_seconds = 0.0
         self.best_val_loss = float('inf')
         self.best_val_dice = 0.0
         self.history = {
@@ -188,10 +198,38 @@ class Trainer:
         for callback in self.callbacks:
             if hasattr(callback, 'on_train_begin'):
                 callback.on_train_begin(self)
-        
-        patience_counter = 0
-        
-        for epoch in range(self.config.epochs):
+
+        if self.start_epoch > 0:
+            # best_model.pth can be NEWER than the resume state: a crash after
+            # an improving epoch saved it, but before last.pth caught up. Adopt
+            # its score so the file on disk and the best_val_dice reported in
+            # results.json describe the same model.
+            best_file = Path(self.config.save_dir) / 'best_model.pth'
+            if best_file.exists():
+                try:
+                    b = torch.load(best_file, map_location='cpu', weights_only=False)
+                    on_disk = b.get('best_score', b.get('best_val_dice'))
+                    if on_disk is not None and float(on_disk) > self.best_val_dice:
+                        self.best_val_dice = float(on_disk)
+                except Exception:
+                    pass
+
+            # A resumed run must not forget what it has already achieved. A
+            # checkpoint callback that starts from best_score=None treats the
+            # first resumed epoch as an improvement and overwrites
+            # best_model.pth with whatever that epoch produced, even if it is
+            # worse than the model it replaces.
+            for callback in self.callbacks:
+                if (hasattr(callback, 'best_score')
+                        and getattr(callback, 'monitor', 'val_dice') == 'val_dice'):
+                    callback.best_score = self.best_val_dice
+            print(f"Resuming at epoch {self.start_epoch + 1}/{self.config.epochs} "
+                  f"(best val Dice so far {self.best_val_dice:.4f})")
+
+        t_session = time.time()
+        elapsed_at_start = self.elapsed_seconds
+
+        for epoch in range(self.start_epoch, self.config.epochs):
             self.current_epoch = epoch
             
             # Callbacks - on_epoch_begin
@@ -229,15 +267,17 @@ class Trainer:
             if is_best:
                 self.best_val_dice = val_dice
                 self.best_val_loss = val_loss
-                patience_counter = 0
-                
+                self.patience_counter = 0
+
                 if self.config.save_best:
                     self._save_checkpoint('best_model.pth')
             else:
-                patience_counter += 1
-            
+                self.patience_counter += 1
+
+            self.elapsed_seconds = elapsed_at_start + (time.time() - t_session)
+
             # Save periodic checkpoint
-            if (epoch + 1) % self.config.save_every == 0:
+            if self.config.save_every > 0 and (epoch + 1) % self.config.save_every == 0:
                 self._save_checkpoint(f'checkpoint_epoch_{epoch + 1}.pth')
             
             # Callbacks - on_epoch_end
@@ -250,13 +290,23 @@ class Trainer:
                         'is_best': is_best
                     })
 
+            # Resume state goes AFTER the callbacks, so the CSV row and the
+            # best-model file for this epoch already exist when it is written:
+            # a crash between the two can then only lose work, never record an
+            # epoch the resume state does not know about.
+            if (self.config.resume_every > 0
+                    and (epoch + 1) % self.config.resume_every == 0
+                    and epoch + 1 < self.config.epochs):
+                self._save_checkpoint('last.pth')
+
             # Early stopping — check callback signal OR internal counter
             should_stop = False
             for callback in self.callbacks:
                 if hasattr(callback, 'should_stop') and callback.should_stop:
                     should_stop = True
                     break
-            if should_stop or (self.config.early_stopping and patience_counter >= self.config.patience):
+            if should_stop or (self.config.early_stopping
+                               and self.patience_counter >= self.config.patience):
                 print(f"Early stopping triggered after {epoch + 1} epochs")
                 break
         
@@ -267,7 +317,13 @@ class Trainer:
         
         # Save final model
         self._save_checkpoint('final_model.pth')
-        
+
+        # A finished run has no use for its resume state, and on Drive it is
+        # the largest file in the directory.
+        last = Path(self.config.save_dir) / 'last.pth'
+        if last.exists():
+            last.unlink()
+
         print(f"Training complete. Best Val Dice: {self.best_val_dice:.4f}")
         
         return self.history
@@ -400,37 +456,79 @@ class Trainer:
         return avg_loss, metrics
     
     def _save_checkpoint(self, filename: str):
-        """Save checkpoint."""
+        """Save checkpoint.
+
+        Holds everything a resumed run needs to continue as if uninterrupted:
+        optimizer moments, scheduler position, the AMP loss scale, the early-
+        stopping counter, and every RNG the next epoch will draw from (the
+        DataLoader shuffle comes from torch's CPU generator, dropout from CUDA's).
+        """
+        import random as _random
         checkpoint = {
             'epoch': self.current_epoch,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
+            'scaler_state_dict': self.scaler.state_dict() if self.scaler else None,
             'best_val_dice': self.best_val_dice,
             'best_val_loss': self.best_val_loss,
+            'patience_counter': self.patience_counter,
+            'elapsed_seconds': self.elapsed_seconds,
             'history': self.history,
+            'rng': {
+                'torch': torch.get_rng_state(),
+                'cuda': (torch.cuda.get_rng_state_all()
+                         if torch.cuda.is_available() else None),
+                'numpy': np.random.get_state(),
+                'python': _random.getstate(),
+            },
             'config': self.config
         }
-        
+
+        # Write to a temporary name and rename into place. torch.save is not
+        # atomic, and a runtime killed mid-write -- which is exactly when a
+        # resume file matters -- would otherwise leave a truncated last.pth
+        # that fails to load and takes the good one with it.
         path = Path(self.config.save_dir) / filename
-        torch.save(checkpoint, path)
-    
+        tmp = path.with_suffix(path.suffix + '.tmp')
+        torch.save(checkpoint, tmp)
+        tmp.replace(path)
+
     def load_checkpoint(self, filepath: str):
-        """Load checkpoint."""
-        checkpoint = torch.load(filepath, map_location=self.device)
-        
+        """Load a checkpoint and arrange for train() to continue after it."""
+        import random as _random
+        checkpoint = torch.load(filepath, map_location=self.device,
+                                weights_only=False)
+
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        
-        if self.scheduler and checkpoint['scheduler_state_dict']:
+
+        if self.scheduler and checkpoint.get('scheduler_state_dict'):
             self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        
+        if self.scaler and checkpoint.get('scaler_state_dict'):
+            self.scaler.load_state_dict(checkpoint['scaler_state_dict'])
+
         self.current_epoch = checkpoint['epoch']
+        self.start_epoch = checkpoint['epoch'] + 1
         self.best_val_dice = checkpoint['best_val_dice']
         self.best_val_loss = checkpoint['best_val_loss']
+        self.patience_counter = checkpoint.get('patience_counter', 0)
+        self.elapsed_seconds = checkpoint.get('elapsed_seconds', 0.0)
         self.history = checkpoint['history']
-        
-        print(f"Loaded checkpoint from epoch {self.current_epoch}")
+
+        # Restore RNG last, after everything above that might draw from it.
+        rng = checkpoint.get('rng')
+        if rng:
+            # map_location above moves every tensor to the training device,
+            # including these generator states -- which must be CPU ByteTensors.
+            torch.set_rng_state(rng['torch'].cpu())
+            if rng.get('cuda') is not None and torch.cuda.is_available():
+                torch.cuda.set_rng_state_all([s.cpu() for s in rng['cuda']])
+            np.random.set_state(rng['numpy'])
+            _random.setstate(rng['python'])
+
+        print(f"Loaded checkpoint from epoch {self.current_epoch + 1}; "
+              f"continuing at epoch {self.start_epoch + 1}")
     
     def evaluate(self, test_loader: DataLoader) -> Dict:
         """Evaluate on test set."""

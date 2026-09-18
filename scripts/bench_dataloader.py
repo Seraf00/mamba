@@ -90,6 +90,12 @@ def main():
     ap.add_argument('--batches', type=int, default=60)
     ap.add_argument('--workers', type=int, nargs='*', default=[0, 4, 8, 12, 16])
     ap.add_argument('--data-dir', default=str(ROOT / 'data' / 'CAMUS'))
+    ap.add_argument('--json', default=None,
+                    help='Write the measured rates here. Used by '
+                         'gpu_shootout.py, which runs several of these at once '
+                         'and needs a parse-free result per process.')
+    ap.add_argument('--quiet', action='store_true',
+                    help='Suppress the table; only the summary is printed')
     args = ap.parse_args()
 
     device = torch.device('cuda')
@@ -103,24 +109,42 @@ def main():
     opt = torch.optim.AdamW(model.parameters(), lr=1e-4)
     scaler = torch.amp.GradScaler('cuda')
 
-    print(f"\n{'workers':>8s} {'persist':>8s} {'prefetch':>9s} "
-          f"{'it/s':>7s} {'s/epoch':>9s}  (200 batches)")
+    if not args.quiet:
+        print(f"\n{'workers':>8s} {'persist':>8s} {'prefetch':>9s} "
+              f"{'it/s':>7s} {'s/epoch':>9s}  (200 batches)")
     best = (None, 0.0)
+    measured = []
     for w in args.workers:
         for persistent, prefetch in ([(False, 2)] if w == 0
                                      else [(False, 2), (True, 4)]):
             rate = bench(w, args.batches, args.batch_size, persistent, prefetch,
                          model, crit, opt, scaler, device, ds)
-            print(f'{w:8d} {str(persistent):>8s} {prefetch:9d} '
-                  f'{rate:7.2f} {200 / rate:9.1f}', flush=True)
+            measured.append({'workers': w, 'persistent': persistent,
+                             'prefetch': prefetch, 'it_per_s': rate,
+                             's_per_epoch': 200 / rate})
+            if not args.quiet:
+                print(f'{w:8d} {str(persistent):>8s} {prefetch:9d} '
+                      f'{rate:7.2f} {200 / rate:9.1f}', flush=True)
             if rate > best[1]:
                 best = ((w, persistent, prefetch), rate)
 
     (w, p, pf), rate = best
     print(f'\nbest: num_workers={w} persistent_workers={p} prefetch_factor={pf}'
           f'  ->  {rate:.2f} it/s, {200/rate:.1f} s/epoch')
-    print(f'current config (4 workers, no persistence) measured 3.60 it/s, 81 s/epoch')
-    print(f'projected speedup: {rate/3.60:.2f}x')
+    print(f'reference sessions ran 8.3 s/epoch; an RTX 4060 laptop runs 81.')
+
+    if args.json:
+        import json
+        with open(args.json, 'w') as f:
+            json.dump({
+                'gpu': torch.cuda.get_device_name(0),
+                'torch': torch.__version__,
+                'model': args.model,
+                'batch_size': args.batch_size,
+                'best': {'workers': w, 'persistent': p, 'prefetch': pf,
+                         'it_per_s': rate, 's_per_epoch': 200 / rate},
+                'measured': measured,
+            }, f, indent=2)
 
 
 if __name__ == '__main__':

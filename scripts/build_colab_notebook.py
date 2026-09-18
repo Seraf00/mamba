@@ -49,15 +49,17 @@ revision:
 | setting | why | audit item |
 |---|---|---|
 | `--batch_size 8` everywhere | the old notebook used 128 for base and 16 for SSM, so every base-vs-SSM comparison crossed batch sizes | NEW-2 |
-| `--early_stopping 0` | patience 20 fired while cosine LR was near peak: DeepLabV3+ stopped at 37 epochs and scored 0.8602; retrained to 100 it scores 0.9140 | NEW-1 |
+| `--early_stopping 0` | with it on, every model gets a different training budget, so architecture is confounded with when the patience counter fired. Patience 20 against a 100-epoch cosine schedule hit 20 of 48 runs. Test Dice: DeepLabV3+ stopped at 37 epochs scores 0.8602, the same model to 100 epochs 0.9140 (+0.054); five models that ran full length in both sessions differ by -0.007 to +0.006 | NEW-1 |
 | `--pin full` | TF32 is on by default from Ampere on, and disabling it moves FPN-UNet's EF by 0.88 points — more than the gaps between adjacent architectures | EF-1 |
 | `--seed` explicit | R2 measures the seed floor the papers currently assert without evidence | SEED-1, NEW-3 |
 
 **Do not change the batch size to fill a bigger GPU.** At batch 8 and 256 px
 these models use a small fraction of a large card, and the temptation is to
 raise the batch. That would reintroduce exactly the confound this revision
-removes. Use `NUM_SHARDS` below instead: it runs several models side by side on
-one GPU, which buys wall-clock time and changes nothing scientifically.
+removes. Run one job at a time instead: measured on an RTX PRO 6000 Blackwell
+(188 SMs, 95 GB), eight concurrent jobs gave 1.06x the throughput of one,
+because separate CUDA processes time-slice the GPU rather than run side by side.
+A single job there does 45 it/s, and R1-R5 comes to roughly 49 hours.
 """))
 
 A(md('## 1. Setup — run once per session'))
@@ -67,17 +69,52 @@ from google.colab import drive
 drive.mount('/content/drive')
 """))
 
-A(code("""
-# Pinned, not nightly. The EF numbers are reproducible only against a fixed
-# environment: skimage 0.25.2 and 0.26.0 disagree on the connected-component
-# filter, which is enough to move a patient's EF. If you must move to a newer
-# torch, re-run the EF evaluation and expect the table to shift.
-!pip install -q torch==2.9.1 torchvision --index-url https://download.pytorch.org/whl/cu128
-!pip install -q scikit-image==0.25.2 timm einops nibabel SimpleITK medpy
+A(md("""
+### Environment — pin it, and pin the version the shootout actually validated
+
+CUDA itself is not installable here: Colab's driver and toolkit are fixed. What
+you choose is the PyTorch wheel's CUDA build, and **cu128 is the only one that
+covers all three candidate GPUs** — its arch list is
+`sm_70 sm_75 sm_80 sm_86 sm_90 sm_100 sm_120`, i.e. A100 (sm_80), H100 (sm_90)
+and Blackwell (sm_120). It is also what every EF number on disk was measured
+against (torch 2.9.1 / 2.10.0, cuda 12.8).
+
+Set `TORCH_SPEC = None` to keep Colab's preinstalled torch — that is the
+combination most likely to have a matching prebuilt `mamba-ssm` wheel, and a
+source build costs 30–60 minutes and may fail. Run the shootout
+(`scripts/colab_gpu_shootout_cell.py`) first, see which works, then **hard-pin
+that version here and never change it mid-programme**. Colab updates its default
+torch silently; a programme spanning weeks would otherwise straddle two builds,
+which is the same class of confound as mixing GPUs.
 """))
 
 A(code("""
-# mamba-ssm + causal-conv1d. Needed for R4 and R5 only; R1-R3 run without them.
+# None = keep Colab's preinstalled torch (pin the value once the shootout says
+# which stack gives a working mamba-ssm fast path).
+# Validated on Colab G4 (RTX PRO 6000 Blackwell, sm_120) on 2026-09-18 with
+# torch 2.11.0+cu128, Triton 3.6.0, mamba-ssm 2.3.2.post1: full kernel stack
+# runs and the Mamba-2 {4 train, 6 fail} partition replicates T10. Pinned so a
+# silent Colab update cannot put R1 and R4 on different builds. If Colab
+# already has this version, pip does nothing.
+TORCH_SPEC = 'torch==2.11.0'
+
+if TORCH_SPEC:
+    !pip install -q {TORCH_SPEC} torchvision --index-url https://download.pytorch.org/whl/cu128
+
+# skimage is pinned regardless of torch: 0.25.2 and 0.26.0 disagree on the
+# connected-component filter, which is enough to move a patient's EF.
+!pip install -q scikit-image==0.25.2 timm einops nibabel SimpleITK medpy
+
+import torch
+print(f'torch {torch.__version__}  cuda {torch.version.cuda}')
+print(f'built for: {" ".join(torch.cuda.get_arch_list())}')
+print('RECORD THIS and use the same stack for every group.')
+"""))
+
+A(code("""
+# mamba-ssm + causal-conv1d. Needed for R4/R5 only; R1-R3 run without them.
+# If this falls back to a source build, it is slow and may fail -- that is the
+# signal to reconsider the GPU rather than to wait it out.
 !pip install -q causal-conv1d --no-build-isolation
 !pip install -q mamba-ssm --no-build-isolation
 """))
@@ -115,17 +152,21 @@ else:
 """))
 
 A(md("""
-## 3. Canonical settings and the concurrency helper
+## 3. Canonical settings
 
-`NUM_SHARDS` is the one knob to tune to your GPU. Each shard is an independent
-training process taking every Nth model of the same plan, so they split the work
-without any model being trained twice.
+**`NUM_SHARDS = 1`, and leave it there** unless the shootout cell measures
+otherwise on your card. Sharding runs several training processes on one GPU, and
+it was expected to be the main speed lever on a large card. Measured, it is not:
 
-Sizing it: a typical model holds ~3 GB at batch 8 and DenseContextU-Net holds
-18.9 GB, so VRAM is rarely the limit — **vCPU is**. Each shard spawns
-`NUM_WORKERS` dataloader processes, so `NUM_SHARDS * (NUM_WORKERS + 1)` should
-stay under the machine's core count. On a 12-vCPU Colab runtime that means 3
-shards at 3 workers; on a 32+ vCPU instance, 8 shards at 3.
+| card | 1 job | 8 jobs | efficiency |
+|---|---|---|---|
+| RTX 4060 Laptop (24 SMs) | 3.64 it/s | — (2 jobs: 2.76) | 38% at 2 |
+| RTX PRO 6000 Blackwell (188 SMs) | 45.03 it/s | 47.73 it/s | 13% |
+
+Without NVIDIA's MPS daemon, separate CUDA processes time-slice the GPU instead
+of overlapping, so extra shards add contention and almost no throughput. The
+machinery stays because it is harmless at 1 and would matter if MPS were
+available; the default is what was measured.
 """))
 
 A(code("""
@@ -140,10 +181,12 @@ PIN         = 'full' # TF32 off; see utils.misc.pin_determinism
 IMG_SIZE    = 256
 
 # ---- machine-dependent ----
-NUM_SHARDS  = 3      # concurrent training processes on the one GPU
-NUM_WORKERS = 3      # dataloader workers PER SHARD
+NUM_SHARDS  = 1      # measured: extra shards time-slice, ~1.06x at 8
+NUM_WORKERS = 8      # one job, so it can have more of the machine's cores
 RESULTS_DIR = '/content/results'
-DRIVE_RESULTS = '/content/drive/MyDrive/Paper1/results'
+# Its own folder: the old sessions lived in Paper1/results, and restoring from
+# there would pull the pre-revision runs back onto the training disk.
+DRIVE_RESULTS = '/content/drive/MyDrive/Paper1/results_revision'
 
 import torch, multiprocessing
 print(f'GPU        : {torch.cuda.get_device_name(0)}')
@@ -169,7 +212,16 @@ BASE_ARGS = [
     '--img_size', str(IMG_SIZE),
     '--mixed_precision',
     '--skip_benchmark',
+    # Disconnect safety. --resume skips models that already have results.json
+    # and continues an interrupted one from last.pth, written every 5 epochs --
+    # the most a disconnect can cost. Periodic checkpoint_epoch_N.pth files are
+    # off: nothing reads them and each carries full optimizer state.
+    '--resume',
+    '--resume_every', '5',
+    '--checkpoint_every', '0',
 ]
+
+SYNC_MINUTES = 10   # copy progress to Drive this often while training
 
 
 def _models_done(exp_dir):
@@ -180,12 +232,33 @@ def _models_done(exp_dir):
     correctness check -- swallow it and try again next tick.
     \"\"\"
     n = 0
-    for f in exp_dir.glob('all_results_shard*.json'):
+    files = list(exp_dir.glob('all_results_shard*.json'))
+    if not files and (exp_dir / 'all_results.json').exists():
+        files = [exp_dir / 'all_results.json']     # single-shard mode
+    for f in files:
         try:
             n += len(json.loads(f.read_text()))
         except (json.JSONDecodeError, OSError):
             pass
     return n
+
+
+def _current(exp_dir):
+    # Last "Training: X" and "Epoch N/M |" lines across the shard logs. Plain
+    # string parsing, no regex: this code lives inside a string in the builder,
+    # and every backslash there needs escaping twice.
+    model, epoch = '', ''
+    for log in sorted(exp_dir.glob('shard*.log')):
+        try:
+            lines = log.read_text(errors='ignore')[-20000:].splitlines()
+        except OSError:
+            continue
+        for ln in lines:
+            if ln.startswith('Training: '):
+                model = ln[len('Training: '):].strip()
+            elif ln.startswith('Epoch ') and ' | ' in ln:
+                epoch = ln.split()[1]
+    return model, epoch
 
 
 def run_group(exp_name, extra_args, shards=None, dry_run=False):
@@ -216,36 +289,112 @@ def run_group(exp_name, extra_args, shards=None, dry_run=False):
             stdout=log, stderr=subprocess.STDOUT))
     print(f'{exp_name}: launched {shards} shards -> {exp_dir}/shard*.log')
 
-    t0 = time.time()
+    t0 = last_sync = time.time()
     while any(p.poll() is None for p in procs):
         alive = sum(p.poll() is None for p in procs)
-        print(f'\\r  {(time.time()-t0)/60:6.1f} min | {alive} shards running | '
-              f'{_models_done(exp_dir)} models done', end='')
+        model, epoch = _current(exp_dir)
+        print(f'\\r  {(time.time()-t0)/60:6.1f} min | {_models_done(exp_dir)} done '
+              f'| now: {model} epoch {epoch}' + ' ' * 10, end='')
+        if time.time() - last_sync > SYNC_MINUTES * 60:
+            save_to_drive(quiet=True)
+            last_sync = time.time()
         time.sleep(60)
     print()
+    save_to_drive(quiet=True)
 
     for log in logs:
         log.close()
     codes = [p.returncode for p in procs]
     print(f'  shard exit codes: {codes}')
 
-    subprocess.run([sys.executable, 'scripts/train_all_models.py',
-                    '--data_dir', DATA_DIR, '--output_dir', RESULTS_DIR,
-                    '--exp_name', exp_name, '--merge_shards'], check=True)
+    # With one shard the trainer writes all_results.json itself; merging would
+    # find no shard files and fail. Only a sharded run needs it.
+    if shards > 1:
+        subprocess.run([sys.executable, 'scripts/train_all_models.py',
+                        '--data_dir', DATA_DIR, '--output_dir', RESULTS_DIR,
+                        '--exp_name', exp_name, '--merge_shards'], check=True)
+        save_to_drive(quiet=True)
+
+    if any(c != 0 for c in codes):
+        tail = (exp_dir / 'shard0.log').read_text(errors='ignore')[-3000:]
+        print('  a shard exited with an error -- last lines of its log:')
+        print(tail)
     return exp_dir
 
 
-def save_to_drive():
+# What survives a disconnect. last.pth is the resume state and must be here;
+# final_model.pth, checkpoint_epoch_*.pth and TensorBoard logs are read by
+# nothing downstream and would only fill Drive.
+_SYNC_FILTER = ['--include=*/', '--include=best_model.pth', '--include=last.pth',
+                '--include=*.json', '--include=*.csv', '--include=*.log',
+                '--include=*.jsonl', '--exclude=*']
+
+
+def save_to_drive(quiet=False):
     os.makedirs(DRIVE_RESULTS, exist_ok=True)
-    !rsync -ah --info=progress2 \\
-        --include='*/' --include='best_model.pth' --include='*.json' \\
-        --include='*.csv' --include='*.log' --exclude='*' \\
-        {RESULTS_DIR}/ {DRIVE_RESULTS}/
+    r = subprocess.run(['rsync', '-a', *_SYNC_FILTER,
+                        f'{RESULTS_DIR}/', f'{DRIVE_RESULTS}/'],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f'\\n  [sync] rsync failed: {r.stderr[-300:]}')
+        return
+    # rsync never deletes, so a finished model's last.pth -- removed locally
+    # when training completes -- would stay on Drive for good: full optimizer
+    # state, up to ~3 GB per model. Not rsync --delete: on a fresh session run
+    # before restore_from_drive(), that would wipe Drive. Instead remove only
+    # resume files whose model has a results.json, i.e. is certainly finished.
+    for lp in Path(DRIVE_RESULTS).glob('*/*/last.pth'):
+        if (lp.parent / 'results.json').exists():
+            lp.unlink()
+    if not quiet:
+        print(f'synced {RESULTS_DIR} -> {DRIVE_RESULTS}')
+
+
+def restore_from_drive():
+    # Bring previous sessions' progress back onto local disk. Run at the start
+    # of every session: harmless on the first (Drive is empty); after a
+    # disconnect it restores results.json for finished models and last.pth for
+    # the interrupted one, which is what --resume reads.
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    if not os.path.isdir(DRIVE_RESULTS):
+        print('nothing on Drive yet -- fresh start')
+        return
+    subprocess.run(['rsync', '-a', *_SYNC_FILTER,
+                    f'{DRIVE_RESULTS}/', f'{RESULTS_DIR}/'], check=True)
+    done = sorted(Path(RESULTS_DIR).glob('*/*/results.json'))
+    partial = sorted(pth for pth in Path(RESULTS_DIR).glob('*/*/last.pth')
+                     if not (pth.parent / 'results.json').exists())
+    print(f'restored from Drive: {len(done)} finished models, '
+          f'{len(partial)} interrupted mid-training')
+    for pth in partial:
+        print(f'  will resume: {pth.parent.parent.name}/{pth.parent.name}')
 """))
 
 A(md("""
-Check the plan before spending hours on it. `dry_run=True` prints the model list
-and settings without training.
+## 4. Start of every session
+
+Run these three cells every time, including after a disconnect.
+
+1. **Restore** pulls earlier progress back from Drive: `results.json` for every
+   finished model and `last.pth` for the one that was interrupted.
+2. **Preflight** checks the machine. It exits with an error on anything that
+   would silently ruin a run: missing scikit-image (every EF becomes `nan`),
+   mamba-ssm without its CUDA kernels (~100x slower), and so on.
+3. **Dry run** prints the plan without training.
+
+Once R1 starts, check the first model's log (`results/r1_canonical/shard0.log`)
+for `Early stopping (effective): OFF`. That line comes from the config the
+trainer actually receives. For the first half of this revision the flag said
+"disabled" while the trainer's own counter still stopped runs at patience 20.
+"""))
+
+A(code("""
+restore_from_drive()
+"""))
+
+A(code("""
+!python scripts/preflight_colab.py --data-dir {DATA_DIR} --results-dir {RESULTS_DIR} \\
+    --shards {NUM_SHARDS} --workers {NUM_WORKERS} --need-mamba
 """))
 
 A(code("""
@@ -263,7 +412,6 @@ canonical. Unblocks R2, R3 and R4.
 
 A(code("""
 run_group('r1_canonical', ['--base_only'])
-save_to_drive()
 """))
 
 A(md("""
@@ -442,34 +590,56 @@ A(code("""
 
 A(md("""
 ---
-## Recovery
+## If training stops
 
-Shards are independent processes, so a disconnect loses only the models that
-were mid-training. Re-running a group skips nothing automatically — use
-`--resume_from`, or re-run with `--models` naming what is missing.
+**Nothing to edit. Re-run the same cells.**
+
+1. Reconnect (Runtime > Connect). Choose the **same GPU type**: every group must
+   run on one card, or base-vs-SSM is confounded with hardware.
+2. Run section 1 (setup), section 2 (dataset) and section 3 (settings) again.
+3. Run section 4. `restore_from_drive()` reports what it found, e.g.
+   `restored from Drive: 5 finished models, 1 interrupted mid-training`.
+4. Re-run **the group cell that was running** (e.g. the R1 cell).
+
+The trainer then:
+
+- **skips** every model whose `results.json` exists
+  (`[resume] unet_v1: already finished ... -- skipping`), keeping its result in
+  `all_results.json`;
+- **continues** the interrupted model from `last.pth`
+  (`Resuming at epoch 36/100`), with optimizer, scheduler, AMP scale and RNG
+  restored. `scripts/test_trainer_resume.py` checks that a resumed run is
+  bit-identical to an uninterrupted one;
+- **starts** the models not yet begun.
+
+**What a disconnect costs.** At most 5 epochs of the model that was running
+(`last.pth` is written every 5 epochs), plus up to 10 minutes of progress not
+yet synced to Drive. Finished models are never retrained.
+
+**Watch progress** in the group cell's status line, or in
+`results/<group>/shard0.log`. `training_log.csv` in each model folder gets one
+row per epoch.
 """))
 
 A(code("""
-# What actually completed, per group.
-for s in SESSIONS:
-    p = Path(RESULTS_DIR) / s / 'all_results.json'
-    shards = sorted((Path(RESULTS_DIR) / s).glob('all_results_shard*.json'))
-    if p.exists():
-        r = json.load(open(p))
-        ok = [x for x in r if 'error' not in x]
-        print(f'{s:20s} merged: {len(ok)} ok, {len(r)-len(ok)} failed')
-    elif shards:
-        n = sum(len(json.load(open(f))) for f in shards)
-        print(f'{s:20s} UNMERGED: {n} models across {len(shards)} shards')
-    else:
-        print(f'{s:20s} not started')
-"""))
-
-A(code("""
-# Merge a group whose shards finished but whose driver cell was interrupted.
-# GROUP = 'r4_ssm_batch8'
-# !python scripts/train_all_models.py --data_dir {DATA_DIR} \\
-#     --output_dir {RESULTS_DIR} --exp_name {GROUP} --merge_shards
+# Where everything stands, from what is on disk (restore first after a disconnect).
+for g in ['r1_canonical', 'r2_seed1', 'r2_seed2', 'r3_param_matched',
+          'r4_ssm_batch8', 'r5_position']:
+    d = Path(RESULTS_DIR) / g
+    if not d.exists():
+        print(f'{g:18s} not started'); continue
+    done = sorted(p.parent.name for p in d.glob('*/results.json'))
+    part = sorted(p.parent.name for p in d.glob('*/last.pth'))
+    errs = []
+    if (d / 'all_results.json').exists():
+        try:
+            errs = [r['display_name'] for r in json.load(open(d / 'all_results.json'))
+                    if 'error' in r]
+        except Exception:
+            pass
+    print(f'{g:18s} {len(done):3d} finished' +
+          (f' | resuming: {", ".join(part)}' if part else '') +
+          (f' | FAILED: {", ".join(errs)}' if errs else ''))
 """))
 
 # --------------------------------------------------------------------------
