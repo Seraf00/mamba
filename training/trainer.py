@@ -33,6 +33,11 @@ class TrainingConfig:
     
     # Mixed precision
     use_amp: bool = True
+    # 'float16' (default, with loss scaling) or 'bfloat16'. bf16 has fp32's
+    # exponent range, so activations cannot overflow the way they do in fp16 --
+    # which is what turned the widened DenseContextU-Net and FPN controls to NaN
+    # mid-training. No GradScaler is needed or used with bf16.
+    amp_dtype: str = 'float16'
     
     # Checkpointing
     save_dir: str = './checkpoints'
@@ -98,10 +103,14 @@ class Trainer:
         self.scheduler = self._create_scheduler()
         
         # Mixed precision - use new API
-        if config.use_amp:
+        if config.amp_dtype not in ('float16', 'bfloat16'):
+            raise ValueError(f"amp_dtype must be 'float16' or 'bfloat16', got {config.amp_dtype!r}")
+        self._bf16 = bool(config.use_amp and config.amp_dtype == 'bfloat16')
+        if config.use_amp and not self._bf16:
             self.scaler = torch.amp.GradScaler('cuda')
         else:
             self.scaler = None
+        self.diverged_epoch = None    # set when a loss goes non-finite
         
         # Metrics
         self.metrics = SegmentationMetrics(num_classes=4)
@@ -251,6 +260,18 @@ class Trainer:
             self.history['val_dice'].append(val_dice)
             self.history['lr'].append(current_lr)
             
+            # Divergence guard. A non-finite loss does not recover: in the R3
+            # run the widened DenseContextU-Net went NaN at epoch 14 and FPN at
+            # epoch 4, then trained on for hours producing nothing. Stop here,
+            # BEFORE this epoch can write best_model.pth or last.pth, so no NaN
+            # state is saved or resumed. Not early stopping: a finite run is
+            # never affected.
+            if not (np.isfinite(train_loss) and np.isfinite(val_loss)):
+                self.diverged_epoch = epoch + 1
+                print(f"DIVERGED: non-finite loss at epoch {epoch + 1} "
+                      f"(train {train_loss}, val {val_loss}) -- stopping this model")
+                break
+
             # Update scheduler
             if self.scheduler is not None:
                 self.scheduler.step()
@@ -403,10 +424,13 @@ class Trainer:
                     self.scaler.update()
                     self.optimizer.zero_grad()
             else:
-                outputs = self.model(images)
-                loss, _ = self._compute_loss_with_deep_supervision(outputs, masks)
-                if accum_steps > 1:
-                    loss = loss / accum_steps
+                # fp32, or bf16 autocast. With enabled=False the context is a
+                # no-op, so the fp32 path is exactly what it was before.
+                with torch.amp.autocast('cuda', dtype=torch.bfloat16, enabled=self._bf16):
+                    outputs = self.model(images)
+                    loss, _ = self._compute_loss_with_deep_supervision(outputs, masks)
+                    if accum_steps > 1:
+                        loss = loss / accum_steps
 
                 loss.backward()
 

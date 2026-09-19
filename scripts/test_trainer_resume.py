@@ -35,6 +35,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -169,8 +170,19 @@ def main() -> int:
         wc = {k: v.detach().cpu() for k, v in c.model.state_dict().items()}
         same_w = all(torch.equal(wa[k], wc[k]) for k in wa)
         check(same_w, 'final weights bit-identical to the uninterrupted run')
-        check(ha['train_loss'] == hc['train_loss'] and ha['val_dice'] == hc['val_dice'],
-              'full history identical (train loss and val Dice, every epoch)')
+        # Validation metrics exactly. The LOGGED train loss only to 1e-6: it is
+        # a mean over pixels whose reduction order is not fully deterministic
+        # on GPU, so the reported scalar can differ in the last float32 bit
+        # between otherwise identical runs -- intermittently, even with no
+        # resume involved. The gradient of a mean does not depend on the value
+        # being averaged, which is why the weights above stay bit-identical.
+        # Dice is built from integer pixel counts: exact. Both loss scalars are
+        # float means with the same reduction-order caveat: 1e-6.
+        check(ha['val_dice'] == hc['val_dice'],
+              'validation Dice identical every epoch')
+        check(np.allclose(ha['train_loss'], hc['train_loss'], rtol=1e-6, atol=0)
+              and np.allclose(ha['val_loss'], hc['val_loss'], rtol=1e-6, atol=0),
+              'logged train and val loss equal to 1e-6 every epoch')
         check(len(hc['train_loss']) == E, f'history covers all {E} epochs')
         check(csv_epochs(d) == list(range(E)),
               f'CSV has each epoch exactly once: {csv_epochs(d)}')
@@ -183,6 +195,49 @@ def main() -> int:
               f'best_val_dice ({c.best_val_dice:.6f})')
         check(abs(c.best_val_dice - a.best_val_dice) < 1e-9,
               'best val Dice equals the uninterrupted run')
+        # ---------------------------------------------------------------- 7-9
+        print('\n7-9. divergence guard and bf16')
+
+        class Poison:
+            """Corrupt the weights at the end of epoch index 1, so epoch index
+            2 produces a non-finite loss -- what fp16 overflow did to the
+            widened DenseContextU-Net and FPN controls."""
+            def on_epoch_end(self, trainer, epoch, logs):
+                if epoch == 1:
+                    with torch.no_grad():
+                        for prm in trainer.model.parameters():
+                            prm.fill_(float('inf'))
+
+        dv = root / 'diverge'
+        t = make(dv, epochs=6, resume_every=1, extra=[Poison()])
+        h = t.train()
+        check(t.diverged_epoch == 3, f'guard fires at the first non-finite epoch '
+                                     f'(epoch {t.diverged_epoch})')
+        check(len(h['train_loss']) == 3, f'training stopped there, not after 6 '
+                                         f'({len(h["train_loss"])} epochs)')
+        check(not (dv / 'last.pth').exists(), 'no NaN resume state left behind')
+        bm = torch.load(dv / 'best_model.pth', map_location='cpu', weights_only=False)
+        check(all(torch.isfinite(v).all() for v in bm['model_state_dict'].values()
+                  if v.dtype.is_floating_point),
+              'best_model.pth is from before the divergence (finite weights)')
+
+        if DEV == 'cuda':
+            pin_determinism(0, 'full')
+            m = Tiny()
+            cfg = TrainingConfig(epochs=3, batch_size=8, learning_rate=1e-2,
+                                 scheduler='cosine', warmup_epochs=0, use_amp=True,
+                                 amp_dtype='bfloat16', save_dir=str(root / 'bf16'),
+                                 save_every=0, device=DEV, num_workers=0,
+                                 early_stopping=False)
+            tr, va = loaders()
+            tb = Trainer(model=m, train_loader=tr, val_loader=va,
+                         criterion=CombinedLoss(dice_weight=1.0, ce_weight=1.0),
+                         config=cfg, callbacks=[])
+            hb = tb.train()
+            check(tb.scaler is None, 'bf16 uses no GradScaler')
+            check(all(np.isfinite(x) for x in hb['train_loss'])
+                  and hb['train_loss'][-1] < hb['train_loss'][0],
+                  f'bf16 trains: loss {hb["train_loss"][0]:.3f} -> {hb["train_loss"][-1]:.3f}')
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

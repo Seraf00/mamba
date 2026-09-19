@@ -59,7 +59,13 @@ raise the batch. That would reintroduce exactly the confound this revision
 removes. Run one job at a time instead: measured on an RTX PRO 6000 Blackwell
 (188 SMs, 95 GB), eight concurrent jobs gave 1.06x the throughput of one,
 because separate CUDA processes time-slice the GPU rather than run side by side.
-A single job there does 45 it/s, and R1-R5 comes to roughly 49 hours.
+
+**Time, measured on G4 with `--pin full`:** R1 took 7.4 h (DenseContextU-Net
+164 min and FPN 147 min of it), R2 about 2.4 h per seed, and the widened
+DenseContext and FPN controls about 6 h and 10 h each. Deterministic algorithms
+and TF32-off cost the heavy convolutional models 1.5-2x over the unpinned
+benchmark that suggested "~49 h for R1-R5"; budget R4 and R5 at roughly 30 h and
+45 h rather than trusting that figure.
 """))
 
 A(md('## 1. Setup — run once per session'))
@@ -145,7 +151,8 @@ import subprocess, sys
 NEEDS = {
     'scripts/train_all_models.py': ['--resume', '--resume_every', '--checkpoint_every',
                                     '--pin', '--wide_only', '--position_only',
-                                    '--param_matched', '--num_shards'],
+                                    '--param_matched', '--num_shards',
+                                    '--amp_dtype'],
     'scripts/evaluate_all_models.py': ['--pin'],
     'scripts/yolo/eval_baseline_ef.py': ['--pin', '--checkpoint-dir'],
 }
@@ -670,35 +677,66 @@ baseline (−1.9%), DeepLabV3+'s is +4.1%, UNet-ResNet's +11.1%. There are no
 extra parameters to attribute a gain to. That is a sentence in the paper, not a
 training run.
 
-It also adds the two controls that were missing where the gap is largest:
+| control | widening | matched | vs target | first R3 run (G4) |
+|---|---|---|---|---|
+| `unet_v1_wide` | `bf=96` | 69.8 M | +1.67% | done, val Dice 0.8999 |
+| `unet_v2_wide` | `bf=104` | 87.1 M | +4.91% | done, val Dice 0.9041 |
+| `transunet_wide` | `vit_layers=26` | 201.3 M | −0.44% | done, val Dice 0.9035 |
+| `swin_unet_wide` | `depths=[2,2,12,2]` | 63.2 M | +2.12% | **failed** as `embed_dim=114` |
+| `dense_context_unet_wide` | `bf=200` | 5.3 M | −1.86% | **NaN** from epoch 14 (fp16) |
+| `fpn_wide` | `resnet101, fpn_channels=1024` | 169.1 M | −2.29% | **NaN** from epoch 4 (fp16) |
 
-| control | widening | matched | vs target |
-|---|---|---|---|
-| `transunet_wide` | `vit_layers=26` | 201.3 M | −0.44% |
-| `fpn_wide` | `resnet101, fpn_channels=1024` | 169.1 M | −2.29% |
-| `swin_unet_wide` | `embed_dim=114` | 59.0 M | −4.67% |
-| `unet_v1_wide` | `bf=96` | 69.8 M | +1.67% |
-| `unet_v2_wide` | `bf=104` | 87.1 M | +4.91% |
-| `dense_context_unet_wide` | `bf=200` | 5.3 M | −1.86% |
+**TransUNet and Swin widen by depth, not width.** Width changes every tensor's
+shape, so the pretrained weights cannot load and the control would be a randomly
+initialised network against a pretrained one — the extra parameters would not be
+what the comparison measured. `embed_dim=114` for Swin did exactly that: it
+matched parameters but could not even be built with Swin-Tiny's 96-wide weights,
+so the first R3 run failed at construction. Depth keeps the pretrained blocks
+and adds fresh ones — how the Mamba variants add capacity, and how the Swin
+family itself scales (Swin-S is `[2,2,18,2]`). `param_match.py` now builds every
+chosen control with pretraining on before emitting it.
 
-TransUNet widens by **depth, not width**. Width lands equally close on
-parameters (`vit_dim=1128` is −0.56%) but makes every ViT-B/16 tensor the wrong
-shape, so the control would be a randomly initialised transformer competing
-against a pretrained one — the extra parameters would not be what the comparison
-measured. Depth keeps the first 12 blocks pretrained and adds fresh ones, which
-is how the Mamba variant adds its capacity too.
+**DenseContextU-Net and FPN run in a separate group, R3b, in bfloat16.** Both
+went NaN under float16 with training loss falling normally until the moment it
+did — the signature of fp16 activation overflow, and the same thing happened to
+both in the original submission's runs, where early stopping at epoch 25 hid it.
+bfloat16 has float32's range, so it cannot overflow that way. It is a stated
+deviation: the baselines trained in float16, and each `results.json` records
+`amp_dtype`. If bf16 also diverges, the trainer's divergence guard stops the
+model at the first non-finite epoch and records it as a failure — minutes, not
+the ~6 and ~10 hours the NaN runs took.
 """))
 
 A(code("""
 # Regenerate rather than trusting the file in git -- the parameter counts are
-# derived from the models as they are now.
+# derived from the models as they are now, and each control is built with
+# pretraining on before it is emitted.
 !python scripts/param_match.py --mamba_type mamba \\
     --output_json {RESULTS_DIR}/param_config_r3.json
 
+# The four controls that train in float16. unet_v1/unet_v2/transunet finished in
+# the first run and are skipped by --resume; this trains swin_unet_wide.
 run_group('r3_param_matched',
-          ['--base_only', '--param_matched', '--wide_only',
+          ['--models', 'unet_v1', 'unet_v2', 'swin_unet', 'transunet',
+           '--param_matched', '--wide_only',
            '--param_config', f'{RESULTS_DIR}/param_config_r3.json'])
-save_to_drive()
+"""))
+
+A(md("""
+### R3b — the two controls that overflow in float16
+
+Before the first launch of this cell, delete from Drive
+`results_revision/r3_param_matched/dense_context_unet_wide/` and
+`.../fpn_wide/` (their float16 runs are NaN and belong to no result), then empty
+the Drive Trash. Roughly 6 h (DenseContext) and 10 h (FPN) on G4 — the two
+slowest runs in the programme.
+"""))
+
+A(code("""
+run_group('r3b_param_matched_bf16',
+          ['--models', 'dense_context_unet', 'fpn',
+           '--param_matched', '--wide_only', '--amp_dtype', 'bfloat16',
+           '--param_config', f'{RESULTS_DIR}/param_config_r3.json'])
 """))
 
 A(md("""
@@ -777,7 +815,7 @@ A(code("""
 # R2 is included: its test metrics ARE the seed floor, which is the reason R2
 # exists.
 SESSIONS = ['r1_canonical', 'r2_seed1', 'r2_seed2', 'r3_param_matched',
-            'r4_ssm_batch8', 'r5_position']
+            'r3b_param_matched_bf16', 'r4_ssm_batch8', 'r5_position']
 
 # 1) Test metrics: Dice, IoU, HD95, ASSD -> <session>/evaluation/.
 #    MUST run first: it writes evaluation_results.json from scratch, so running
@@ -877,7 +915,7 @@ row per epoch.
 A(code("""
 # Where everything stands, from what is on disk (restore first after a disconnect).
 for g in ['r1_canonical', 'r2_seed1', 'r2_seed2', 'r3_param_matched',
-          'r4_ssm_batch8', 'r5_position']:
+          'r3b_param_matched_bf16', 'r4_ssm_batch8', 'r5_position']:
     d = Path(RESULTS_DIR) / g
     if not d.exists():
         print(f'{g:18s} not started'); continue

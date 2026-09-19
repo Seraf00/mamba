@@ -69,10 +69,13 @@ _RESNET_BACKBONES = ['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152
 # the head-dimension analysis behind the Mamba-2 shared-memory ceiling.
 _TRANSUNET_SWEEP = [{'vit_layers': n} for n in range(12, 41)]
 
-# SwinUNet's embed_dim must be divisible by 6: by 3 for the [3,6,12,24] head
-# counts over dims embed_dim*[1,2,4,8], and by 2 again for PatchExpanding's
-# (p1 p2 c) rearrange. 111 and 117 satisfy the first and fail the second.
-_SWIN_SWEEP = [{'embed_dim': d} for d in range(96, 199, 6)]
+# SwinUNet widens by DEPTH of stage 3, which is how the Swin family itself
+# scales (Swin-T [2,2,6,2] -> Swin-S [2,2,18,2]). An earlier version widened
+# embed_dim (96 -> 114): it matched parameters, but Swin-Tiny's pretrained
+# weights are 96-wide, so the model could not even be constructed with
+# pretraining and the R3 run failed at load time. That was missed because this
+# sweep counts parameters with pretrained=False -- see _verify_buildable().
+_SWIN_SWEEP = [{'depths': [2, 2, d, 2]} for d in range(6, 32, 2)]
 
 WIDEN_SEARCH_SPACE = {
     # Continuous-width models
@@ -168,9 +171,32 @@ def find_matched_widening(base_name, target_params_m, base_params_m=None):
     if base_params_m and abs(best_params - base_params_m) < 1e-6:
         return None, best_params, 'UNNEEDED'
 
+    problem = _verify_buildable(base_name, best_kwargs)
+    if problem:
+        return best_kwargs, best_params, f'BROKEN: {problem}'
+
     err_pct = (best_diff / target_params_m) * 100 if target_params_m > 0 else 0
     status = 'OK' if err_pct < 10 else 'APPROX'
     return best_kwargs, best_params, status
+
+
+def _verify_buildable(base_name, kwargs):
+    """Build the chosen control EXACTLY as training will: pretrained weights on.
+
+    The sweep counts parameters with pretrained=False (fast, no downloads), and
+    that is how embed_dim=114 for SwinUNet got through: it counts fine, but
+    Swin-Tiny's 96-wide weights cannot load into it, so training failed at
+    construction. Returns an error string, or None if the model builds.
+    """
+    kw = {'in_channels': 1, 'num_classes': 4, **kwargs}
+    if base_name == 'swin_unet':
+        kw.setdefault('img_size', 224)
+    try:
+        m = get_model(base_name, **kw)
+        del m
+        return None
+    except Exception as e:  # noqa: BLE001
+        return f'{type(e).__name__}: {str(e)[:120]}'
 
 
 def _kwargs_label(kwargs):
@@ -291,6 +317,7 @@ def main():
                 }
                 for r in results
                 if r['match_status'] not in ('N/A', 'UNNEEDED')
+                and not str(r['match_status']).startswith('BROKEN')
                 and r['matched_kwargs'] is not None
             ]
         }

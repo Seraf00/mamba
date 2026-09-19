@@ -353,6 +353,14 @@ def parse_args():
                         help='Device (cuda or cpu)')
     parser.add_argument('--mixed_precision', action='store_true',
                         help='Use automatic mixed precision training')
+    parser.add_argument('--amp_dtype', type=str, default='float16',
+                        choices=['float16', 'bfloat16'],
+                        help='Mixed-precision type. float16 (default) is what '
+                             'every canonical session uses. bfloat16 has fp32 '
+                             'range and cannot overflow; it exists for models '
+                             'that go NaN under float16 (the widened '
+                             'DenseContextU-Net and FPN controls). Recorded in '
+                             'each results.json, so the deviation is visible.')
     parser.add_argument('--pin', type=str, default='off',
                         choices=['full', 'cudnn', 'tf32', 'algos', 'off'],
                         help='Pin arithmetic precision and algorithm choice. '
@@ -757,6 +765,7 @@ def train_single_model(
         patience=args.early_stopping if args.early_stopping > 0 else args.epochs,
         save_every=args.checkpoint_every,
         resume_every=args.resume_every if args.resume else 0,
+        amp_dtype=args.amp_dtype,
     )
 
     # Print what the TRAINER will do, not what the flag says. The flag said
@@ -802,6 +811,25 @@ def train_single_model(
     history = trainer.train()
     # Cumulative across interruptions, so it still describes the whole run.
     training_time = trainer.elapsed_seconds
+
+    if trainer.diverged_epoch:
+        # Not a result. Rename the pre-divergence best checkpoint so no
+        # evaluator mistakes it for a finished model, keep the evidence in
+        # DIVERGED.json, and write NO results.json -- so a relaunch retries it
+        # (e.g. with --amp_dtype bfloat16) instead of skipping it. The trainer
+        # has already removed last.pth, so the retry cannot resume into NaN.
+        bm = model_dir / 'best_model.pth'
+        if bm.exists():
+            bm.replace(model_dir / 'diverged_best_model.pth')
+        with open(model_dir / 'DIVERGED.json', 'w') as f:
+            json.dump({'diverged_at_epoch': trainer.diverged_epoch,
+                       'best_val_dice_before': float(trainer.best_val_dice),
+                       'amp_dtype': args.amp_dtype if args.mixed_precision else 'float32',
+                       'training_time_seconds': training_time}, f, indent=2)
+        raise RuntimeError(
+            f'diverged: non-finite loss at epoch {trainer.diverged_epoch} '
+            f'(amp {args.amp_dtype if args.mixed_precision else "off"}); '
+            f'best val Dice before divergence {trainer.best_val_dice:.4f}')
     
     # Get best metrics
     best_val_dice = trainer.best_val_dice if hasattr(trainer, 'best_val_dice') else max(history.get('val_dice', [0]))
@@ -846,6 +874,9 @@ def train_single_model(
         'best_val_dice': float(best_val_dice),
         'training_time_seconds': training_time,
         'epochs_trained': len(history.get('train_loss', [])),
+        # Precision this model trained under -- the canonical sessions are all
+        # float16, so any bfloat16 row is a deviation to state in Methods.
+        'amp_dtype': args.amp_dtype if args.mixed_precision else 'float32',
         'final_train_loss': float(history.get('train_loss', [0])[-1]) if history.get('train_loss') else None,
         'final_val_loss': float(history.get('val_loss', [0])[-1]) if history.get('val_loss') else None,
         **efficiency_results

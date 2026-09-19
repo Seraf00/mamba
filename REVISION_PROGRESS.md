@@ -711,3 +711,71 @@ finished model; mamba guard passes where mamba-ssm is installed.
 `r5_position`) and at each session's `baseline_ef_native.json`, instead of
 `base_models`/`param_matched`/... and `results/yolo/*.json`. As it stands it
 would silently attach OLD EF to NEW Dice for every unchanged model name.
+
+---
+
+## First results on G4, and what R3 broke (2026-09-19)
+
+### R1 + R2 (downloaded to results_revision/, verified)
+
+`scripts/verify_downloaded_results.py`: all 17 checkpoints load, parameter
+counts match, every training_log.csv has epochs 0-99 exactly once. All groups:
+batch 8, 100 epochs, early stopping effective OFF (0 early stops), --pin full,
+TF32 off both, torch 2.11.0+cu128, RTX PRO 6000 Blackwell. R1 unet_v1 was
+resumed after a real disconnect at epoch 6 -- clean.
+
+Validation Dice (test Dice still to come from the Evaluation cells):
+DeepLabV3+ 0.9070 (was 0.8387 truncated at 37 -> now FIRST), UNet-ResNet
+0.9052, nnU-Net 0.9039, UNet-V2 0.9038, TransUNet 0.9021, UNet-V1 0.9000,
+DenseContext 0.8560, FPN 0.8275, Swin 0.8139. FPN and Swin weak at full
+length, so not an early-stopping artefact.
+
+Seed floor (seeds 42/1/2, val Dice range): TransUNet 0.0004, nnU-Net 0.0011,
+UNet-ResNet 0.0013, UNet-V1 0.0018. Top six span 0.0070. Swin: a previous
+batch-8/100-epoch run scored 0.8445 vs 0.8139 now -- 20-30x the seed floor of
+the others; Swin's seed variance is unmeasured (not in R2).
+
+Measured time: R1 7.4 h (DenseCtx 164 min, FPN 147 min). --pin full costs the
+heavy conv models 1.5-2x over the unpinned benchmark; the "~49 h" figure was
+wrong. Budget R4 ~30 h, R5 ~45 h.
+
+### R3 first run: 3 of 6 controls usable
+
+| control | outcome |
+|---|---|
+| unet_v1_wide | 100 ep, 0.8999 (base 0.9000) |
+| unet_v2_wide | 100 ep, 0.9041 (base 0.9038) |
+| transunet_wide | 100 ep, 0.9035 (base 0.9021, seed range 0.0004) |
+| swin_unet_wide | FAILED at construction: embed_dim=114 cannot load 96-wide Swin-Tiny |
+| dense_context_unet_wide | NaN from epoch 14; ran 86 NaN epochs, ~6 h |
+| fpn_wide | NaN from epoch 4; stopped by user at epoch ~32 (~6.3 min/epoch) |
+
+Both NaN runs: train loss falling normally, then sudden NaN -> fp16 activation
+overflow signature. Same controls diverged in the ORIGINAL submission too;
+early stopping at epoch 25 hid it.
+
+### Fixes
+
+- **Divergence guard** (Trainer): non-finite train/val loss stops the model at
+  that epoch, before best_model/last.pth are written; train_all_models renames
+  best_model.pth -> diverged_best_model.pth, writes DIVERGED.json, raises (no
+  results.json, so a relaunch retries).
+- **--amp_dtype {float16,bfloat16}**: bf16 has fp32 range; no GradScaler. Default
+  float16 path unchanged. Recorded per model as results.json `amp_dtype`.
+- **Swin widening by depth**: [2,2,12,2] = 63.16 M, +2.12% (was embed_dim=114,
+  -4.67%, unbuildable). Loader loads min(depth, 6) stage-3 blocks, refuses other
+  widths with a message. Built WITH pretraining and trained fwd/bwd: OK.
+- **param_match._verify_buildable**: every chosen control is constructed with
+  pretraining on before being emitted; failures become BROKEN and are excluded.
+- Notebook: R3 cell trains unet_v1/unet_v2/swin/transunet (3 skip via resume);
+  new R3b group `r3b_param_matched_bf16` trains dense_context + fpn in bf16.
+  Header time estimate corrected.
+- test_trainer_resume.py: +guard, +bf16 checks. Found the logged train/val LOSS
+  scalars differ intermittently at 1 float32 ulp between identical runs (reduction
+  order); weights and Dice stay bit-identical. Test now exact on weights and
+  Dice, 1e-6 on logged losses; 3/3 consecutive passes.
+
+### Relaunch procedure for R3
+Delete from Drive `results_revision/r3_param_matched/dense_context_unet_wide/`
+and `.../fpn_wide/` (NaN runs; fpn's last.pth is a NaN state), empty Trash, pull,
+reopen notebook, run setup/settings/section 4, then R3 cell, then R3b cell.

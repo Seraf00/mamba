@@ -732,6 +732,16 @@ class SwinUNet(nn.Module):
                   "pretrained weight loading. Install with: pip install timm")
             return
 
+        # Swin-Tiny is embed_dim 96. Any other width makes every tensor the
+        # wrong shape, and load_state_dict raises on a size mismatch even with
+        # strict=False -- which is exactly how the embed_dim=114 control failed
+        # in R3. Say so and keep the random init; widen by depth instead.
+        if self.patch_embed.proj.out_channels != 96:
+            print(f"[SwinUNet] embed_dim={self.patch_embed.proj.out_channels} != 96: "
+                  "Swin-Tiny weights do not fit this width, so the encoder stays "
+                  "randomly initialised. Widen by depth to keep pretraining.")
+            return
+
         print("[SwinUNet] Loading pretrained Swin-Tiny (ImageNet-1K) encoder weights ...")
         swin_pretrained = timm.create_model(
             'swin_tiny_patch4_window7_224', pretrained=True
@@ -749,9 +759,18 @@ class SwinUNet(nn.Module):
 
         # ---- encoder stages ----
         for i in range(self.num_layers):
-            # Transformer blocks
+            # Transformer blocks. A deeper stage than Swin-Tiny's (depth
+            # widening, the way the Swin family itself scales: Swin-S is
+            # [2,2,18,2]) loads the blocks that exist and leaves the rest fresh,
+            # so the parameter-matched control keeps its pretraining -- as the
+            # Mamba variant does. Reading block j unconditionally would KeyError.
             stage = self.encoder_stages[i]
-            for j in range(len(stage.blocks)):
+            n_src = len({k.split('.')[3] for k in src
+                         if k.startswith(f'layers.{i}.blocks.')})
+            if len(stage.blocks) > n_src:
+                print(f"[SwinUNet] stage {i}: {n_src} of {len(stage.blocks)} blocks "
+                      f"pretrained, {len(stage.blocks) - n_src} fresh (depth-widened)")
+            for j in range(min(len(stage.blocks), n_src)):
                 src_prefix = f'layers.{i}.blocks.{j}'
                 dst_prefix = f'encoder_stages.{i}.blocks.{j}'
 
