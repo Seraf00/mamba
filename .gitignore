@@ -62,3 +62,6 @@ paper2/*.fdb_latexmk
 paper2/*.fls
 paper2/*.log
 paper2/*.out
+
+# Downloaded revision results (GBs of checkpoints; Drive + PC hold these)
+results_revision/
