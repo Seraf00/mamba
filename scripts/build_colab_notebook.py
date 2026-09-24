@@ -62,10 +62,11 @@ because separate CUDA processes time-slice the GPU rather than run side by side.
 
 **Time, measured on G4 with `--pin full`:** R1 took 7.4 h (DenseContextU-Net
 164 min and FPN 147 min of it), R2 about 2.4 h per seed, and the widened
-DenseContext and FPN controls about 6 h and 10 h each. Deterministic algorithms
-and TF32-off cost the heavy convolutional models 1.5-2x over the unpinned
-benchmark that suggested "~49 h for R1-R5"; budget R4 and R5 at roughly 30 h and
-45 h rather than trusting that figure.
+DenseContext and FPN controls about 6 h and 10 h each. R4 took 19.2 h for the 19
+arms that completed, and R4b is about 6 h. Deterministic algorithms and TF32-off
+cost the heavy convolutional models 1.5-2x over the unpinned benchmark that
+suggested "~49 h for R1-R5"; budget R5 at roughly 45 h rather than trusting that
+figure.
 """))
 
 A(md('## 1. Setup — run once per session'))
@@ -750,21 +751,72 @@ Some runs fail here, and each failure is a result to report, not a bug to fix:
 
 - `mamba_dense_context_unet` + VMamba is skipped as architecturally
   incompatible (>12 GiB backward spike).
-- Six Mamba-2 arms fail, as in the published table. On G4, five hit the Triton
-  shared-memory ceiling (Swin, UNet-V1, TransUNet, Pure-Mamba, FPN).
-  `mamba_unet_v2` fails **earlier and differently**: its 682 channels are not a
-  multiple of 8, which causal-conv1d requires. The original run recorded a
-  shared-memory failure for it, so the outcome is the same but the cause changed
-  with the software stack. Report the cause as measured.
+- Six Mamba-2 arms fail, as in the published table, and **all six fail the same
+  way**: the Triton shared-memory ceiling. Measured on G4, `Required:` 327808
+  bytes for UNet-V1, Swin, TransUNet and Pure-Mamba, 655488 for UNet-V2 and FPN,
+  against a hardware limit of 101376. An earlier draft of this cell predicted
+  that `mamba_unet_v2` would instead fail on causal-conv1d's multiple-of-8
+  channel requirement; it does not, in any of the three sessions that attempted
+  it. Report the cause as measured, which is shared memory for all six.
+
+That leaves the published {4 train, 6 fail} Mamba-2 partition intact: Mamba-2
+trains on `unet_resnet`, `deeplab`, `nnunet` and `dense_context_unet` only.
 
 Failures are recorded in `all_results.json` with their error message and cost
 seconds each. Let them fail.
+
+**Four arms diverge in float16** and are not failures of this kind — they are
+the R3 controls' problem turning up in the SSM grid. `mamba_swin_unet` + Mamba
+(NaN at epoch 48), `mamba_swin_unet` + VMamba (16), `mamba_transunet` + VMamba
+(28) and `pure_mamba_unet` + Mamba (4) all went non-finite with the loss falling
+normally until the moment it did. The divergence guard stopped each one at that
+epoch before any checkpoint was written, so no `results.json` exists and they
+are retried by R4b below, in bfloat16. Sibling arms of the same architectures
+finished normally (`mamba_transunet_mamba` 0.9046, `mamba_fpn_mamba` 0.9081), so
+this is combination-specific, not architecture-wide.
 """))
 
 A(code("""
 _require_mamba_fast()
 run_group('r4_ssm_batch8',
           ['--mamba_only', '--mamba_variants', 'mamba', 'mamba2', 'vmamba'])
+save_to_drive()
+"""))
+
+A(md("""
+### R4b — the four SSM arms that overflow in float16
+
+Same remedy as R3b, for the same reason: bfloat16 has float32's exponent range,
+so the activations that overflowed cannot. Each `results.json` records
+`amp_dtype`, and the precision deviation is stated in Methods rather than
+hidden.
+
+**This group deliberately trains six arms, not four.** Model selection is a
+cross product of `--models` and `--mamba_variants`, so asking for the four
+diverged arms by name is not expressible in one call -- and it has to be one
+call, because the trainer rewrites `all_results.json` and `summary.csv` from
+whatever a single session walked. Three narrow calls into one group name would
+leave a `summary.csv` holding only the last arm. The two extra arms are the ones
+that already trained in float16, `mamba_transunet_mamba` (0.9046) and
+`pure_mamba_unet_vmamba` (0.9008), and retraining them in bfloat16 costs about
+3.2 h and buys the control the mixed-precision table needs: two arms measured in
+both precisions, which is the evidence that bf16 is not what moved the numbers.
+Compare them against their float16 results in `r4_ssm_batch8`.
+
+Delete any partial Drive state under `results_revision/r4b_ssm_bf16/` before the
+first launch, then empty the Drive Trash. About 6 h in total on G4, projected
+from the measured per-epoch times of the float16 attempts (0.5 h Swin+Mamba,
+0.9 h Swin+VMamba, 1.0 h TransUNet+VMamba, 0.6 h Pure-Mamba+Mamba, plus the two
+controls). Mamba-2 is not included: its six failures are the result, not
+something bf16 fixes.
+"""))
+
+A(code("""
+_require_mamba_fast()
+run_group('r4b_ssm_bf16',
+          ['--models', 'mamba_swin_unet', 'mamba_transunet', 'pure_mamba_unet',
+           '--mamba_variants', 'mamba', 'vmamba',
+           '--amp_dtype', 'bfloat16'])
 save_to_drive()
 """))
 
@@ -815,7 +867,8 @@ A(code("""
 # R2 is included: its test metrics ARE the seed floor, which is the reason R2
 # exists.
 SESSIONS = ['r1_canonical', 'r2_seed1', 'r2_seed2', 'r3_param_matched',
-            'r3b_param_matched_bf16', 'r4_ssm_batch8', 'r5_position']
+            'r3b_param_matched_bf16', 'r4_ssm_batch8', 'r4b_ssm_bf16',
+            'r5_position']
 
 # 1) Test metrics: Dice, IoU, HD95, ASSD -> <session>/evaluation/.
 #    MUST run first: it writes evaluation_results.json from scratch, so running
@@ -915,7 +968,8 @@ row per epoch.
 A(code("""
 # Where everything stands, from what is on disk (restore first after a disconnect).
 for g in ['r1_canonical', 'r2_seed1', 'r2_seed2', 'r3_param_matched',
-          'r3b_param_matched_bf16', 'r4_ssm_batch8', 'r5_position']:
+          'r3b_param_matched_bf16', 'r4_ssm_batch8', 'r4b_ssm_bf16',
+          'r5_position']:
     d = Path(RESULTS_DIR) / g
     if not d.exists():
         print(f'{g:18s} not started'); continue

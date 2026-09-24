@@ -99,6 +99,12 @@ def main():
                                         '--param_config', str(R / 'param_config_r3.json')], 2),
             ('r4_ssm_batch8', ['--mamba_only', '--mamba_variants', 'mamba',
                                'mamba2', 'vmamba'], 29),
+            # 6, not 4: selection is a cross product, so the four diverged arms
+            # cannot be named alone. The two extra are the float16 arms that
+            # finished, retrained in bf16 as the precision control.
+            ('r4b_ssm_bf16', ['--models', 'mamba_swin_unet', 'mamba_transunet',
+                              'pure_mamba_unet', '--mamba_variants', 'mamba',
+                              'vmamba', '--amp_dtype', 'bfloat16'], 6),
             ('r5_position', ['--position_ablation', '--position_only',
                              '--mamba_variants', 'mamba', 'vmamba'], 68),
         ]

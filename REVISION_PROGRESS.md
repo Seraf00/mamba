@@ -779,3 +779,133 @@ early stopping at epoch 25 hid it.
 Delete from Drive `results_revision/r3_param_matched/dense_context_unet_wide/`
 and `.../fpn_wide/` (NaN runs; fpn's last.pth is a NaN state), empty Trash, pull,
 reopen notebook, run setup/settings/section 4, then R3 cell, then R3b cell.
+
+## R4 finished: 19 of 29 arms usable (2026-09-22)
+
+Four Colab sessions (2026-09-18 21:09, 09-19 21:07, 09-20 18:45, 09-21 23:04),
+19.2 h of GPU time on the completed arms. The last session only re-walked
+finished models via `[resume]`; nothing new ran in it. Every completed arm logs
+`Early stopping (effective): OFF` and `epochs_trained: 100`.
+
+### Ledger: 19 complete, 10 failed
+
+| failure | arms | cause |
+|---|---|---|
+| Triton shared memory | 6 Mamba-2 arms | `Required:` 327808 or 655488 vs hardware limit 101376 |
+| fp16 divergence (NaN) | 4 arms | activation overflow; caught by the divergence guard |
+
+**The published {4 train, 6 fail} Mamba-2 partition replicates exactly.**
+Trained: `unet_resnet`, `deeplab`, `nnunet`, `dense_context_unet`.
+Failed: `unet_v1`, `unet_v2`, `swin_unet`, `transunet`, `fpn`, `pure_mamba_unet`.
+
+### Correction to the notebook's R4 prose
+
+The R4 markdown predicts that `mamba_unet_v2_mamba2` fails "earlier and
+differently", on causal-conv1d's multiple-of-8 channel requirement. It does
+not. It failed on shared memory, `Required: 655488`, in all three sessions that
+attempted it — the same ceiling as the other five, at the larger of the two
+observed sizes (`fpn_mamba2` also needs 655488; the other four need 327808).
+So all six Mamba-2 failures are the shared-memory ceiling and the R4 cell text
+must be corrected in `build_colab_notebook.py` before the next rebuild.
+
+### New: fp16 divergence is not confined to the R3 controls
+
+Four R4 arms went non-finite, none of them predicted:
+
+| arm | NaN at epoch | best val Dice before |
+|---|---|---|
+| `mamba_swin_unet_mamba` | 48 | 0.3758 |
+| `mamba_swin_unet_vmamba` | 16 | 0.3466 |
+| `mamba_transunet_vmamba` | 28 | 0.8819 |
+| `pure_mamba_unet_mamba` | 4 | 0.3497 |
+
+The guard did its job: it stopped each one at the NaN epoch, before any
+checkpoint was written, and raised, so no `results.json` exists and a relaunch
+retries. Sibling arms of the same architectures finished normally
+(`mamba_transunet_mamba` 0.9046, `mamba_fpn_mamba` 0.9081), so this is a
+combination-specific overflow, not an architecture-wide one. These four need a
+bf16 rerun (**R4b**), exactly as DenseContext and FPN need R3b. All three Swin
+SSM arms are currently empty: two diverged, one hit the shared-memory ceiling.
+
+### Code version straddles R4
+
+R4 session 1 ran at `4b7db7c`; sessions 2-4 ran at `9ac4b7d`. Two arms are
+affected: `mamba_unet_v1_mamba` trained entirely at `4b7db7c` (its
+`results.json` has no `amp_dtype` field, which is how you spot it), and
+`mamba_unet_v1_vmamba` trained epochs 1-65 at `4b7db7c` and resumed 66-100 at
+`9ac4b7d`. **Checked, and numerically benign**: `git diff 4b7db7c 9ac4b7d --
+training/trainer.py` touches only the bf16 branch, the divergence guard (a
+`break` on non-finite loss, after the history append, before any checkpoint
+write) and a `enabled=False` no-op autocast on the non-AMP path. The float16
+training path is unchanged, so no completed arm's numbers depend on which
+version ran it. `models/base/swin_unet.py` also changed, but every Swin arm in
+R4 failed, so no completed result touches it.
+
+### What the numbers say (validation Dice, vs R1 baselines)
+
+| architecture | base | best SSM arm | delta | params vs base |
+|---|---|---|---|---|
+| deeplab_v3 | 0.9070 | 0.9097 (vmamba) | +0.0027 | 1.05x |
+| unet_resnet | 0.9052 | 0.9066 (mamba2) | +0.0014 | 1.10x |
+| nnunet | 0.9039 | 0.9027 (vmamba) | **-0.0012** | 1.03x |
+| unet_v2 | 0.9038 | 0.9056 (vmamba) | +0.0018 | 2.65x |
+| transunet | 0.9021 | 0.9046 (mamba) | +0.0025 | 1.98x |
+| unet_v1 | 0.9000 | 0.9026 (mamba) | +0.0026 | 2.21x |
+| dense_context_unet | 0.8560 | 0.8940 (mamba) | +0.0380 | 2.47x |
+| fpn | 0.8275 | 0.9081 (mamba) | **+0.0806** | 5.38x |
+| swin_unet | 0.8139 | -- | -- | all three arms failed |
+
+`pure_mamba_unet_vmamba` reached 0.9008 (96.80 M) and has no base counterpart.
+
+**The gain tracks the parameter multiplier, not the SSM.** Where the SSM block
+adds at most ~10% parameters (deeplab, unet_resnet, nnunet) the change is
++0.0027, +0.0014 and -0.0012 — at or below the R2 seed floor of 0.001-0.002.
+Every large gain is an arm that is also 2.5-5.4x the base model. This is the
+capacity confound the R3 controls exist to remove, and the two controls that
+still have not produced a number — `fpn_wide` and `dense_context_unet_wide`,
+both awaiting R3b in bf16 — are precisely the two that decide whether the
+headline SSM result survives. R3b is no longer a loose end; it is the load
+bearing run.
+
+Second: the best overall number in the programme is now
+`mamba_deeplab_vmamba` 0.9097 against baseline DeepLabV3+ 0.9070, a gap of
+0.0027 for which neither model has a seed estimate — R2 covered TransUNet,
+nnU-Net, UNet-ResNet and UNet-V1, not DeepLabV3+. Any "SSM beats the best
+baseline" claim needs seeds on these two.
+
+### R4b added to the notebook (done)
+
+`build_colab_notebook.py` now emits a group `r4b_ssm_bf16` after R4, and the R4
+cell's Mamba-2 prose is corrected to the measured cause. Notebook rebuilt: 41
+cells, `check_notebook_syntax.py` clean, `test_notebook_rungroup.py` has an
+`r4b_ssm_bf16` expectation.
+
+**It trains six arms, not four, on purpose.** Model selection is a cross product
+of `--models` and `--mamba_variants`, so the four diverged arms cannot be named
+on their own — and it must be a single `run_group` call, because
+`train_all_models.py` builds `all_results` fresh per session and rewrites
+`all_results.json` and `summary.csv` from only the models that session walked
+(`main()`, around line 1206). Three narrow calls into one group name would leave
+a `summary.csv` holding just the last arm. The two extra arms are
+`mamba_transunet_mamba` and `pure_mamba_unet_vmamba`, which already have float16
+numbers (0.9046, 0.9008); in bf16 they cost ~3.2 h and become the
+float16-vs-bf16 control that the mixed-precision table needs.
+
+Verified by dry run: the six arms are `mamba_swin_unet_{mamba,vmamba}`,
+`mamba_transunet_{mamba,vmamba}`, `pure_mamba_unet_{mamba,vmamba}`.
+
+Cost ~6 h, projected from the measured per-epoch times of the float16 attempts
+and calibrated against two arms whose wall time is known (projection ran 12-30%
+under actual): 0.5 h Swin+Mamba, 0.9 h Swin+VMamba, 1.0 h TransUNet+VMamba,
+0.6 h Pure-Mamba+Mamba, plus 0.65 h and 2.6 h for the two controls.
+
+### Next for R4
+
+1. Run R3, R3b, then the R4b cell. Delete any partial Drive state under
+   `results_revision/r4b_ssm_bf16/` first and empty the Trash.
+2. Leave the six Mamba-2 shared-memory failures alone. They are the result.
+3. Download the full `r4_ssm_batch8` directory and run
+   `verify_downloaded_results.py`; only `summary.csv`, `experiment_config.json`
+   and `shard0.log` have been inspected so far.
+4. Run the three Evaluation cells for R4 — no test Dice, HD95 or EF exists for
+   any arm yet.
