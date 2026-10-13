@@ -909,3 +909,143 @@ under actual): 0.5 h Swin+Mamba, 0.9 h Swin+VMamba, 1.0 h TransUNet+VMamba,
    and `shard0.log` have been inspected so far.
 4. Run the three Evaluation cells for R4 — no test Dice, HD95 or EF exists for
    any arm yet.
+
+## Drive audit 2026-09-26: R3b, R4b and R5 are done, and bf16 has a price
+
+Read directly out of `MyDrive/Paper1/results_revision`, group by group, from each
+group's `all_results.json` rather than from folder dates (a Drive folder's date
+is its own, not its newest file's). Nothing below is inferred from the repo.
+
+### Group state
+
+| group | state | GPU time |
+|---|---|---|
+| r1_canonical | 9/9 | -- |
+| r2_seed1 | 4/4 (transunet 0.9020, nnunet 0.9034, unet_v1 0.9013, unet_resnet 0.9064) | -- |
+| r2_seed2 | folder present, **not opened in this audit** | -- |
+| r3_param_matched | 4 float16 controls on disk; group files stale, see below | -- |
+| r3b_param_matched_bf16 | **2/2 done** | 17.8 h |
+| r4_ssm_batch8 | **20/29**, 9 failures | ~20 h |
+| r4b_ssm_bf16 | **6/6 done** | 6.0 h |
+| r5_position | **65/68**, 3 diverged | 33.4 h |
+| evaluation | **no `evaluation/` directory exists in any group** | -- |
+
+R4 gained one arm since the 09-22 download: `mamba_transunet_vmamba` finished at
+0.9052 in float16. Its nine failures are now 6 Mamba-2 shared-memory (final) and
+3 float16 divergences, all three recovered by R4b.
+
+### bfloat16 costs about 0.018 Dice
+
+R4b trained six arms; three of them already had float16 numbers, which is what
+those two "extra" arms were for. All three pairs agree:
+
+| arm | float16 | bfloat16 | delta |
+|---|---|---|---|
+| mamba_transunet_mamba | 0.9046 | 0.8847 | -0.0199 |
+| mamba_transunet_vmamba | 0.9052 | 0.8843 | -0.0209 |
+| pure_mamba_unet_vmamba | 0.9008 | 0.8884 | -0.0124 |
+
+Mean -0.0177: **ten times the R2 seed floor**, and larger than most of the
+position effects R5 exists to measure. A bf16 row cannot sit in a table beside
+float16 rows without a precision column and a stated caveat. This applies to
+R3b's two controls, R4b's three recoveries, and whatever R5b produces.
+
+### R3b splits the SSM claim in two
+
+The two controls that decide it, both bf16, 100 epochs:
+
+| model | base (fp16) | widened control (bf16) | control + 0.018 | SSM arm (fp16) |
+|---|---|---|---|---|
+| fpn | 0.8275, 32.16 M | 0.8940, 169.1 M | ~0.912 | 0.9081, 173.1 M |
+| dense_context_unet | 0.8560, 2.18 M | 0.8131, 5.3 M | ~0.831 | 0.8940, 5.39 M |
+
+**FPN: capacity explains the entire +0.0806 SSM gain.** The widened control
+matches or beats the Mamba arm once the precision penalty is allowed for.
+
+**DenseContextU-Net: capacity explains none of it.** Widening *hurts* -- the
+control lands 0.043 below its own base -- while the Mamba arm gains 0.038.
+
+Two caveats to carry into the prose. The 0.018 correction was measured on SSM
+models and is being extrapolated to CNNs. And `fpn_wide` is
+`resnet101 + fpn_channels=1024`, a different backbone, not the same network made
+wider; the DenseContext control is a true widening (`base_features=200`).
+
+The honest claim is therefore architecture-specific: the SSM block buys nothing
+over equal capacity on FPN, and buys 0.038 on DenseContextU-Net. That is a
+better result than either "SSM works" or "it is all capacity", and it is what
+the data says.
+
+### Swin's widened control lands below its own base
+
+`swin_unet_wide` (`depths=[2,2,12,2]`, 63.16 M, float16, 100 ep) scores
+**0.7729** against base Swin-UNet's 0.8139 at 41.84 M. Widening by depth hurts
+it. That row is a finding, not a control.
+
+### float16 divergence is not deterministic
+
+`mamba_transunet_vmamba` diverged at epoch 28 on one attempt and completed at
+0.9052 on another. The other divergence epochs also moved between attempts:
+Swin+Mamba 48 -> 42, Swin+VMamba 16 -> 17, Pure-Mamba+Mamba 4 -> 6. So a
+divergence is not a property of the configuration alone, and a single NaN run is
+not evidence that a configuration cannot train in float16. Relevant to how the
+failures are worded in Paper D.
+
+### R3: stale group files, and a float16 session that should not have run
+
+All four float16 controls have a valid `results.json`:
+
+| control | Dice | params | kwargs |
+|---|---|---|---|
+| unet_v1_wide | 0.8999 | 69.8 M | base_features=96 |
+| unet_v2_wide | 0.9041 | 87.1 M | base_features=104 |
+| transunet_wide | 0.9035 | 201.3 M | vit_layers=26 |
+| swin_unet_wide | 0.7729 | 63.2 M | depths=[2,2,12,2] |
+
+But the group's `all_results.json` holds **two rows** (882 bytes) and its
+`summary.csv` is still from 19 September. A session started
+`2026-09-26T07:24` whose `models_to_train` lists **all six** wide controls at
+`amp_dtype: float16` -- not the four the R3 cell names -- resume-skipped
+unet_v1 and unet_v2, rewrote `all_results.json` with just those two, and began
+retraining `dense_context_unet_wide` in float16: the run that goes NaN, and the
+one R3b had already finished in bf16. It was stopped by the user.
+
+Two consequences:
+
+1. **Re-run the R3 cell as built.** All four resume-skip; the point is the side
+   effect of rewriting the group files complete. Without it `fill_tables.py`
+   sees two controls and silently misses `swin_unet_wide` and `transunet_wide`.
+2. **Delete `r3_param_matched/dense_context_unet_wide/`.** It holds a
+   `best_model.pth` (20.4 MB) and a 133-byte `training_log.csv` from the stopped
+   run, and no `results.json`. `evaluate_all_models` discovers checkpoints by
+   scanning, so left in place it would evaluate a one-epoch model as a control.
+
+### R5b cell added
+
+`build_colab_notebook.py` now emits an **R5b** cell after R5. It re-enters the
+same `r5_position` group with `--amp_dtype bfloat16`; resume skips the 65 arms
+that have a `results.json` and trains only the three that diverged
+(`mamba_swin_unet_mamba_pos-encoder`, `mamba_swin_unet_vmamba_pos-encoder`,
+`mamba_fpn_mamba_pos-neck`). About 1.2 h, from R5's own per-arm means (Swin
+0.35 h, FPN+Mamba 0.45 h; 0.51 h averaged over all 65). Walking all 68 also
+rewrites `all_results.json` and `summary.csv` complete.
+
+The cell carries a commented-out alternative: a separate `r5b_position_bf16`
+group over every arm of `mamba_swin_unet` and `mamba_fpn`, both variants, 18
+arms, about 7.3 h. It keeps the float16 runs, makes each affected within-model
+comparison precision-consistent, and turns 15 more arms into float16-vs-bf16
+pairs. Dry run confirms 68 and 18 arms respectively. Notebook rebuilt to 43
+cells, `check_notebook_syntax.py` clean, `r5b_position_bf16` added to both
+session lists.
+
+### What is left
+
+GPU, one session: R3 re-walk 5-10 min; R5b 1.2 h (or 7.3 h clean); evaluation
+for ~115 models across seven groups, **3-8 h and unmeasured** -- time the R1
+group first and multiply by 12.8 rather than trusting that range. Then download
+and offload per group, which is gated by link speed, not GPU.
+
+No GPU: rewire `fill_tables.py`, regenerate tables and figures, rewrite the
+prose the new results invalidate (DeepLabV3+ first not last, the capacity split,
+the bf16 penalty, Swin's widened control), Paper B's 500 characters, the TODOs,
+two citations, TRACE-1.2 and 1.3, LAT-1 re-timing, response letters. Four to
+seven working days.

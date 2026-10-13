@@ -847,6 +847,223 @@ save_to_drive()
 """))
 
 A(md("""
+### R5b — the three arms that overflow in float16
+
+Measured 2026-09-26: 65 of the 68 arms finished in float16 (33.4 h). Three went
+NaN and the guard stopped them, so they have no `results.json` and a relaunch
+retries them: `mamba_swin_unet_mamba_pos-encoder` (epoch 18),
+`mamba_swin_unet_vmamba_pos-encoder` (37) and `mamba_fpn_mamba_pos-neck` (3).
+
+This cell re-enters **the same group** with `--amp_dtype bfloat16`. Resume skips
+the 65 that have a `results.json` and trains only those three, about 1.2 h from
+R5's own per-arm times (Swin 0.35 h, FPN+Mamba 0.45 h). It also rewrites
+`all_results.json` and `summary.csv` complete, at 68 entries, because the
+session walks every arm whether it trains it or not.
+
+**Read the three cells it produces as a lower bound.** R4b measured the bf16
+penalty on three arms that train in both precisions -- TransUNet+Mamba -0.0199,
+TransUNet+VMamba -0.0209, Pure-Mamba+VMamba -0.0124 -- so roughly 0.018 Dice,
+about ten times the seed floor and larger than most position effects. These
+three cells are therefore not on the same footing as their float16 siblings and
+need a precision flag in the table.
+
+The precision-consistent alternative costs about 7.3 h: a separate bf16 group
+over every arm of `mamba_swin_unet` and `mamba_fpn`, both variants (18 arms),
+leaving the float16 runs in place. That makes each affected within-model
+comparison internally consistent and turns 15 more arms into float16-vs-bf16
+pairs. Swap the call below for the commented one to take it.
+"""))
+
+A(code("""
+_require_mamba_fast()
+
+# Cheap: 3 arms, into the existing group. 65 resume-skip.
+run_group('r5_position',
+          ['--position_ablation', '--position_only',
+           '--mamba_variants', 'mamba', 'vmamba',
+           '--amp_dtype', 'bfloat16'])
+
+# Precision-consistent alternative (~7.3 h), separate group, float16 runs kept:
+# run_group('r5b_position_bf16',
+#           ['--position_ablation', '--position_only',
+#            '--position_models', 'mamba_swin_unet', 'mamba_fpn',
+#            '--mamba_variants', 'mamba', 'vmamba',
+#            '--amp_dtype', 'bfloat16'])
+
+save_to_drive()
+"""))
+
+A(md("""
+---
+## Repairs — the October 2026 download audit
+
+Four defects found by verifying the downloaded results against their own
+artefacts. Everything the audit found is already on the PC at
+`D:/Papers/Paper1/results_revision/`, so the cells below may delete the bad
+copies here without losing evidence.
+
+1. **`r1_canonical/fpn` is a dead run.** Its `training_log.csv` is NaN from
+   epoch 13 -- 87 of 100 rows -- and its reported 0.8275 comes from epoch 11.
+   R1 trained on 18 September, a day before the divergence guard existed, so
+   nothing caught it, and the number reached `summary.csv`, the test metrics
+   (0.8514) and the EF table (10.00). It is the only NaN arm in the programme.
+   Retrained in bfloat16 below. **State in Methods that FPN base is the one
+   baseline at bf16, and why**: the bf16 penalty on stable convolutional models
+   runs 0.011-0.020, so its row is not on the same footing as the other eight.
+2. **`r2_seed2/unet_resnet` evaluates to nothing.** Training is healthy (100
+   clean epochs, 0.9051) but the test metrics read Dice 0.1258 / HD95 83.29 and
+   every one of the 50 EF records reads EDV = ESV = 2 ml. Re-evaluated below.
+   If it reproduces, the checkpoint itself is bad and the arm needs retraining
+   (~0.2 h).
+3. **R4's three diverged directories still hold `best_model.pth`.** The guard
+   renames it to `diverged_best_model.pth`, but `save_to_drive()` is
+   deliberately not `rsync --delete`, so the pre-rename name survived in Drive
+   and came back on the next sync. `find_model_checkpoints` looks for exactly
+   that filename, so the evaluator tried to load all three and wrote
+   `{"error": "Unknown model: ..."}` stubs -- `evaluation_results.json` has 23
+   keys for 20 finished models.
+4. **`session_out/r4_ssm_batch8` is empty**, the only group with no
+   quality-stratified table and no qualitative figure.
+
+Run these in order. About 3 h, nearly all of it the FPN retrain.
+"""))
+
+A(code("""
+import shutil
+
+# ---- repairs 1, 3 and 4: clear the bad copies from BOTH the runtime and Drive.
+# rsync never deletes, so removing only the local copy would let Drive's stale
+# file come back on the next sync. The PC download keeps every one of these.
+
+# 1) the NaN fpn run -> gone, so --resume retrains it instead of skipping it
+for base in (Path(RESULTS_DIR), Path(DRIVE_RESULTS)):
+    d = base / 'r1_canonical' / 'fpn'
+    if d.exists():
+        shutil.rmtree(d)
+        print('removed', d)
+
+# 3) R4's diverged checkpoints -> gone, so the evaluator stops finding them.
+#    DIVERGED.json and training_log.csv stay: they are the evidence.
+for arm in ('mamba_swin_unet_mamba', 'mamba_swin_unet_vmamba',
+            'pure_mamba_unet_mamba'):
+    for base in (Path(RESULTS_DIR), Path(DRIVE_RESULTS)):
+        d = base / 'r4_ssm_batch8' / arm
+        if not (d / 'DIVERGED.json').exists():
+            continue                       # never touch a finished model
+        for f in ('best_model.pth', 'last.pth'):
+            if (d / f).exists():
+                (d / f).unlink()
+                print('removed', d / f)
+"""))
+
+A(code("""
+# 1) FPN base, retrained in bfloat16. --base_only walks all nine so
+# all_results.json and summary.csv come out complete; the eight finished
+# baselines resume-skip in seconds and only fpn trains. ~2.5 h.
+run_group('r1_canonical', ['--base_only', '--amp_dtype', 'bfloat16'])
+save_to_drive()
+"""))
+
+A(code("""
+# 2, 3, 4) re-evaluate the two affected groups, in the same order as the
+# Evaluation section: metrics, then EF, then the session products. Running
+# colab_session.py before evaluate_all_models would have its injected arrays
+# erased.
+for s in ('r1_canonical', 'r2_seed2', 'r4_ssm_batch8'):
+    d = Path(RESULTS_DIR) / s
+    !python scripts/evaluate_all_models.py --checkpoint_dir {d} \\
+        --data_dir {DATA_DIR} --pin full
+    !python scripts/yolo/eval_baseline_ef.py \\
+        --checkpoint-dir {d} --data-dir {DATA_DIR} --pin full \\
+        --out {d}/baseline_ef_native.json
+    !python scripts/colab_session.py \\
+        --checkpoint_dir {d} --data_dir {DATA_DIR} \\
+        --out_dir {RESULTS_DIR}/session_out/{s}
+save_to_drive()
+"""))
+
+A(code("""
+# Check the repairs landed before spending anything on the optional runs.
+import csv, json, math
+
+ev = json.load(open(f'{RESULTS_DIR}/r4_ssm_batch8/evaluation/evaluation_results.json'))
+stubs = [k for k, v in ev['results'].items() if 'error' in v]
+print(f'R4 evaluation keys: {len(ev["results"])} (want 20), stubs: {stubs or "none"}')
+
+rows = list(csv.DictReader(open(f'{RESULTS_DIR}/r1_canonical/fpn/training_log.csv')))
+nan = sum(1 for r in rows if r['val_loss'] == 'nan' or r['val_loss'] == '')
+fpn = json.load(open(f'{RESULTS_DIR}/r1_canonical/fpn/results.json'))
+print(f'fpn: {len(rows)} epochs, {nan} NaN rows (want 0), dice '
+      f'{fpn["best_val_dice"]:.4f}, amp {fpn.get("amp_dtype")}')
+
+ur = json.load(open(f'{RESULTS_DIR}/r2_seed2/evaluation/evaluation_results.json'))
+d = ur['results']['unet_resnet']['dice_mean']
+print(f'r2_seed2 unet_resnet test dice {d:.4f} (want ~0.91; still broken if ~0.13)')
+
+q = Path(f'{RESULTS_DIR}/session_out/r4_ssm_batch8')
+print(f'session_out/r4_ssm_batch8: {len(list(q.glob("*"))) if q.exists() else 0} files (want 4)')
+"""))
+
+A(md("""
+### Optional, ~3.4 h — two measurements the audit showed are worth buying
+
+**DeepLabV3+ seeds (~0.6 h).** It leads validation and is the one top model with
+no seed estimate, so the leaderboard's first place currently rests on an
+unmeasured variance. Each call walks five models; the four finished ones
+resume-skip.
+
+**Swin replicate (~2.8 h).** Three arms were accidentally trained twice at the
+same seed and the same precision, and came out 0.0725 and 0.1381 apart on
+Swin+Mamba against 0.0026 on FPN. Full determinism is pinned, so the SSM kernels
+are evidently not deterministic. This cell repeats all eight Swin position arms
+in bfloat16 as a fresh group, giving eight paired replicates against
+`r5b_position_bf16` -- the same arms at the same precision.
+
+That turns an accident into the largest variance measurement in the programme,
+and it decides whether the Swin position ablation can be reported at all: if the
+spread holds, the position effects sit an order of magnitude below the
+run-to-run noise and must be reported as such rather than ranked.
+"""))
+
+A(code("""
+# Optional 1: DeepLabV3+ at seeds 1 and 2. ~0.3 h each.
+for seed in (1, 2):
+    run_group(f'r2_seed{seed}',
+              ['--models', 'transunet', 'nnunet', 'unet_v1', 'unet_resnet',
+               'deeplab_v3', '--seed', str(seed)])
+save_to_drive()
+"""))
+
+A(code("""
+# Optional 2: replicate of the eight Swin position arms, bf16, fresh group.
+# Compare against r5b_position_bf16 -- same arms, same precision, same seed.
+_require_mamba_fast()
+run_group('r6_swin_replicate_bf16',
+          ['--position_ablation', '--position_only',
+           '--position_models', 'mamba_swin_unet',
+           '--mamba_variants', 'mamba', 'vmamba',
+           '--amp_dtype', 'bfloat16'])
+save_to_drive()
+"""))
+
+A(code("""
+# What the replicate measured: same configuration, two runs.
+import json
+a = {m['display_name']: m for m in json.load(
+        open(f'{RESULTS_DIR}/r5b_position_bf16/all_results.json')) if 'error' not in m}
+b = {m['display_name']: m for m in json.load(
+        open(f'{RESULTS_DIR}/r6_swin_replicate_bf16/all_results.json')) if 'error' not in m}
+ds = []
+for n in sorted(set(a) & set(b)):
+    d = b[n]['best_val_dice'] - a[n]['best_val_dice']
+    ds.append(abs(d))
+    print(f'{n:<42} {a[n]["best_val_dice"]:.4f} vs {b[n]["best_val_dice"]:.4f}  {d:+.4f}')
+if ds:
+    print(f'\\n{len(ds)} replicate pairs | mean |delta| {sum(ds)/len(ds):.4f} '
+          f'| max {max(ds):.4f} | R2 seed floor for reference: 0.0004-0.0018')
+"""))
+
+A(md("""
 ---
 ## Evaluation
 
@@ -868,7 +1085,7 @@ A(code("""
 # exists.
 SESSIONS = ['r1_canonical', 'r2_seed1', 'r2_seed2', 'r3_param_matched',
             'r3b_param_matched_bf16', 'r4_ssm_batch8', 'r4b_ssm_bf16',
-            'r5_position']
+            'r5_position', 'r5b_position_bf16']
 
 # 1) Test metrics: Dice, IoU, HD95, ASSD -> <session>/evaluation/.
 #    MUST run first: it writes evaluation_results.json from scratch, so running
@@ -969,7 +1186,7 @@ A(code("""
 # Where everything stands, from what is on disk (restore first after a disconnect).
 for g in ['r1_canonical', 'r2_seed1', 'r2_seed2', 'r3_param_matched',
           'r3b_param_matched_bf16', 'r4_ssm_batch8', 'r4b_ssm_bf16',
-          'r5_position']:
+          'r5_position', 'r5b_position_bf16']:
     d = Path(RESULTS_DIR) / g
     if not d.exists():
         print(f'{g:18s} not started'); continue
